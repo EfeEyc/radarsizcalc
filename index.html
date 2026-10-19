@@ -30,7 +30,7 @@
       </div>
 
       <button type="button" id="btnToggleChart" class="secondary-btn">
-        <span>🗺️ AYT Chart &amp; Freqs</span>
+        <span>🗺️ AYT TMA Chart</span>
       </button>
     </div>
   </header>
@@ -57,7 +57,7 @@
         <div class="form-grid">
           <!-- 1. Waypoint / Airway Quick Select -->
           <div class="field-group waypoint-group">
-            <label class="field-label" id="wptFieldLabel">1. Entry Waypoint / STAR</label>
+            <label class="field-label" id="wptFieldLabel">1. Waypoint / Entry Fix</label>
             <div class="wpt-grid" id="wptGrid">
               <!-- Populated by JS -->
             </div>
@@ -242,6 +242,196 @@
       </div>
     </section>
 
+    <!-- SITE-NATIVE INTERACTIVE AYT TMA VECTOR CHART -->
+    <section class="card native-chart-card" id="nativeChartSection">
+      <div class="card-header">
+        <div>
+          <h2>🗺️ AYT TMA Airway &amp; Waypoint Chart</h2>
+          <p class="card-sub">Click any waypoint corridor on the chart to select it in the calculator.</p>
+        </div>
+        <div class="freq-badges">
+          <span class="freq-pill">ANK ACC: <strong>131.05</strong></span>
+          <span class="freq-pill">ERCAN ACC: <strong>126.7</strong></span>
+          <span class="freq-pill twr-pill">AYT TWR: <strong>118.1</strong></span>
+        </div>
+      </div>
+
+      <div class="svg-chart-container">
+        <svg viewBox="0 0 860 800" class="ayt-svg-chart" aria-label="AYT TMA Native Chart">
+          <defs>
+            <marker id="arrowRed" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M 0 1.5 L 10 5 L 0 8.5 z" fill="#f87171" />
+            </marker>
+            <marker id="arrowCyan" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+              <path d="M 0 1.5 L 10 5 L 0 8.5 z" fill="#38bdf8" />
+            </marker>
+          </defs>
+
+          <!-- Background Grid Rings (25 NM & TMA 50/60 NM Boundary) -->
+          <circle cx="430" cy="400" r="105" class="dme-ring-inner" />
+          <circle cx="430" cy="400" r="210" class="tma-boundary-circle" />
+
+          <!-- MSA Boxes inside TMA -->
+          <g class="msa-group">
+            <rect x="295" y="248" width="78" height="40" rx="4" class="msa-box" />
+            <text x="334" y="265" class="msa-title">MSA</text>
+            <text x="334" y="281" class="msa-val">10,000'</text>
+
+            <rect x="498" y="275" width="78" height="40" rx="4" class="msa-box" />
+            <text x="537" y="292" class="msa-title">MSA</text>
+            <text x="537" y="308" class="msa-val">9,000'</text>
+
+            <rect x="475" y="478" width="78" height="40" rx="4" class="msa-box" />
+            <text x="514" y="495" class="msa-title">MSA</text>
+            <text x="514" y="511" class="msa-val">3,000'</text>
+
+            <rect x="280" y="445" width="78" height="40" rx="4" class="msa-box" />
+            <text x="319" y="462" class="msa-title">MSA</text>
+            <text x="319" y="478" class="msa-val">12,000'</text>
+          </g>
+
+          <!-- 1. NORTH: KUMRU / KFK (VA-16, R-350, FL120) -->
+          <g class="chart-corridor" data-wpt="KUMRU">
+            <line x1="369" y1="55" x2="352" y2="195" class="corridor-wall" />
+            <line x1="415" y1="47" x2="438" y2="190" class="corridor-wall" />
+            <!-- Outer center dashed line -->
+            <line x1="392" y1="52" x2="409" y2="193" class="airway-dashed" />
+            <!-- Inbound red track -->
+            <line x1="409" y1="193" x2="428" y2="382" class="inbound-track" marker-end="url(#arrowRed)" />
+            <!-- Outer Fix: KFK -->
+            <polygon points="392,42 385,55 399,55" class="wpt-triangle-outer" />
+            <text x="392" y="34" class="chart-wpt-outer">KFK</text>
+            <!-- Airway Specs -->
+            <text x="398" y="118" class="chart-spec">FL120 • VA-16</text>
+            <text x="399" y="135" class="chart-radial">R-350</text>
+            <!-- TMA Entry Fix: KUMRU -->
+            <polygon points="409,185 402,198 416,198" class="wpt-triangle" />
+            <text x="366" y="212" class="chart-wpt-main">KUMRU</text>
+          </g>
+
+          <!-- 2. NORTHEAST: DAMLA / HİSAR (W-77, R-030, FL130) -->
+          <g class="chart-corridor" data-wpt="DAMLA">
+            <line x1="535" y1="185" x2="625" y2="35" class="corridor-wall" />
+            <line x1="572" y1="242" x2="668" y2="62" class="corridor-wall" />
+            <line x1="635" y1="58" x2="535" y2="218" class="airway-dashed" />
+            <line x1="535" y1="218" x2="440" y2="384" class="inbound-track" marker-end="url(#arrowRed)" />
+            <!-- Outer Fix: HİSAR -->
+            <polygon points="635,50 628,63 642,63" class="wpt-triangle-outer" />
+            <text x="645" y="42" class="chart-wpt-outer">HİSAR</text>
+            <!-- Airway Specs -->
+            <text x="595" y="140" class="chart-spec">W-77 • FL130</text>
+            <text x="580" y="157" class="chart-radial">R-030</text>
+            <!-- TMA Entry Fix: DAMLA -->
+            <polygon points="535,210 528,223 542,223" class="wpt-triangle" />
+            <text x="578" y="230" class="chart-wpt-main">DAMLA</text>
+          </g>
+
+          <!-- 3. EAST: KONAK / MUT (R-55, R-090, FL130) -->
+          <g class="chart-corridor" data-wpt="KONAK">
+            <line x1="638" y1="376" x2="815" y2="376" class="corridor-wall" />
+            <line x1="638" y1="424" x2="815" y2="424" class="corridor-wall" />
+            <line x1="795" y1="400" x2="640" y2="400" class="airway-dashed" />
+            <line x1="640" y1="400" x2="450" y2="400" class="inbound-track" marker-end="url(#arrowRed)" />
+            <!-- Outer Fix: MUT -->
+            <polygon points="795,392 788,405 802,405" class="wpt-triangle-outer" />
+            <text x="795" y="384" class="chart-wpt-outer">MUT</text>
+            <!-- Airway Specs -->
+            <text x="718" y="368" class="chart-spec">R-090 • FL130 • R-55</text>
+            <!-- TMA Entry Fix: KONAK -->
+            <polygon points="640,392 633,405 647,405" class="wpt-triangle" />
+            <text x="640" y="440" class="chart-wpt-main">KONAK</text>
+            <!-- KNK FIX + Holding Pattern -->
+            <circle cx="525" cy="400" r="4" fill="#38bdf8" />
+            <text x="530" y="388" class="chart-fix-label">KNK FIX</text>
+            <rect x="525" y="400" width="52" height="22" rx="11" class="hold-racetrack" />
+          </g>
+
+          <!-- 4. SOUTHEAST: MANAV / DOREN (W-83, R-130, FL070) -->
+          <g class="chart-corridor" data-wpt="MANAV">
+            <line x1="608" y1="510" x2="775" y2="645" class="corridor-wall" />
+            <line x1="572" y1="548" x2="740" y2="682" class="corridor-wall" />
+            <line x1="742" y1="652" x2="591" y2="535" class="airway-dashed" />
+            <line x1="591" y1="535" x2="445" y2="412" class="inbound-track" marker-end="url(#arrowRed)" />
+            <!-- Outer Fix: DOREN -->
+            <polygon points="742,644 735,657 749,657" class="wpt-triangle-outer" />
+            <text x="765" y="642" class="chart-wpt-outer">DOREN</text>
+            <!-- Airway Specs -->
+            <text x="678" y="575" class="chart-spec">R-130 • FL070 • W-83</text>
+            <!-- TMA Entry Fix: MANAV -->
+            <polygon points="591,527 584,540 598,540" class="wpt-triangle" />
+            <text x="580" y="562" class="chart-wpt-main">MANAV</text>
+          </g>
+
+          <!-- 5. SOUTH: DERYA / TOMBİ (VA-16, R-170, FL070) -->
+          <g class="chart-corridor" data-wpt="DERYA">
+            <line x1="428" y1="610" x2="452" y2="765" class="corridor-wall" />
+            <line x1="482" y1="605" x2="506" y2="760" class="corridor-wall" />
+            <line x1="478" y1="748" x2="454" y2="608" class="airway-dashed" />
+            <line x1="454" y1="608" x2="433" y2="420" class="inbound-track" marker-end="url(#arrowRed)" />
+            <!-- Outer Fix: TOMBİ -->
+            <polygon points="478,740 471,753 485,753" class="wpt-triangle-outer" />
+            <text x="478" y="772" class="chart-wpt-outer">TOMBİ</text>
+            <!-- Airway Specs -->
+            <text x="466" y="675" class="chart-spec">R-170 • FL070 • VA-16</text>
+            <!-- TMA Entry Fix: DERYA -->
+            <polygon points="454,600 447,613 461,613" class="wpt-triangle" />
+            <text x="498" y="602" class="chart-wpt-main">DERYA</text>
+            <!-- 10 DME FIX + 1 dk Hold -->
+            <polygon points="442,492 436,503 448,503" class="wpt-triangle-fix" />
+            <text x="485" y="492" class="chart-fix-label">10 DME FIX</text>
+            <rect x="442" y="496" width="24" height="54" rx="12" class="hold-racetrack-red" />
+            <text x="424" y="528" class="chart-hold-min">1 dk</text>
+            <text x="482" y="528" class="chart-hold-min">1 dk</text>
+          </g>
+
+          <!-- 6. WEST: ALPAY / W-79 (W-79, R-270, FL120) -->
+          <g class="chart-corridor" data-wpt="ALPAY">
+            <line x1="45" y1="376" x2="222" y2="376" class="corridor-wall" />
+            <line x1="45" y1="424" x2="222" y2="424" class="corridor-wall" />
+            <line x1="65" y1="400" x2="220" y2="400" class="airway-dashed" />
+            <line x1="220" y1="400" x2="410" y2="400" class="inbound-track" marker-end="url(#arrowRed)" />
+            <!-- Outer Fix: W-79 -->
+            <polygon points="65,392 58,405 72,405" class="wpt-triangle-outer" />
+            <text x="65" y="384" class="chart-wpt-outer">W-79</text>
+            <!-- Airway Specs -->
+            <text x="138" y="368" class="chart-spec">FL120 • R-270 • W-79</text>
+            <!-- TMA Entry Fix: ALPAY -->
+            <polygon points="220,392 213,405 227,405" class="wpt-triangle" />
+            <text x="220" y="440" class="chart-wpt-main">ALPAY</text>
+          </g>
+
+          <!-- 7. NORTHWEST: BRONZ / CRD (R-55, R-310, FL110) -->
+          <g class="chart-corridor" data-wpt="BRONZ">
+            <line x1="92" y1="152" x2="248" y2="255" class="corridor-wall" />
+            <line x1="65" y1="192" x2="222" y2="295" class="corridor-wall" />
+            <line x1="102" y1="184" x2="258" y2="288" class="airway-dashed" />
+            <line x1="258" y1="288" x2="414" y2="390" class="inbound-track" marker-end="url(#arrowRed)" />
+            <!-- Outer Fix: CRD -->
+            <polygon points="102,176 95,189 109,189" class="wpt-triangle-outer" />
+            <text x="102" y="168" class="chart-wpt-outer">CRD</text>
+            <!-- Airway Specs -->
+            <text x="165" y="210" class="chart-spec">FL110 • R-55 • R-310</text>
+            <!-- TMA Entry Fix: BRONZ -->
+            <polygon points="258,280 251,293 265,293" class="wpt-triangle" />
+            <text x="235" y="315" class="chart-wpt-main">BRONZ</text>
+          </g>
+
+          <!-- 5 DME North & Arc to KNK FIX -->
+          <circle cx="424" cy="355" r="3.5" fill="#38bdf8" />
+          <text x="398" y="352" class="chart-fix-label">5 DME</text>
+          <path d="M 424 355 Q 485 350 522 396" fill="none" stroke="#38bdf8" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#arrowCyan)" />
+
+          <!-- CENTER: AYT VOR -->
+          <g class="vor-center">
+            <rect x="418" y="388" width="24" height="24" fill="#0b111e" stroke="#38bdf8" stroke-width="2" />
+            <polygon points="430,391 421,406 439,406" fill="none" stroke="#38bdf8" stroke-width="1.8" />
+            <circle cx="430" cy="401" r="2" fill="#38bdf8" />
+            <text x="398" y="428" class="vor-label">AYT VOR</text>
+          </g>
+        </svg>
+      </div>
+    </section>
+
     <!-- LIVE POSITION ESTIMATOR AT TIME T -->
     <section class="card">
       <div class="card-header">
@@ -261,21 +451,6 @@
       </div>
     </section>
   </main>
-
-  <!-- CHART MODAL -->
-  <div id="chartModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="chartModalTitle">
-    <div class="modal-content">
-      <div class="modal-header">
-        <h2 id="chartModalTitle">AYT TMA RWY 36 STARs &amp; Airway Reference Chart</h2>
-        <button type="button" id="btnCloseChart" class="close-btn" aria-label="Close chart">✕</button>
-      </div>
-      <div class="modal-body">
-        <div class="chart-img-wrap">
-          <img src="chart.png" alt="AYT TMA RWY 36 STARs Chart" />
-        </div>
-      </div>
-    </div>
-  </div>
 
   <script src="app.js"></script>
 </body>

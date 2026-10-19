@@ -257,7 +257,7 @@ code {
 /* FORM GRID */
 .form-grid {
   display: grid;
-  grid-template-columns: 1.25fr 1fr;
+  grid-template-columns: 1.3fr 1fr;
   gap: 1rem;
   align-items: stretch;
 }
@@ -294,22 +294,22 @@ code {
 /* WAYPOINT BUTTONS */
 .wpt-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(125px, 1fr));
-  gap: 0.45rem;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 0.5rem;
 }
 
 .wpt-btn {
   background: var(--bg-elevated);
   border: 1px solid var(--border);
-  border-radius: 7px;
-  padding: 0.5rem 0.6rem;
+  border-radius: 8px;
+  padding: 0.55rem 0.65rem;
   color: var(--text-main);
   cursor: pointer;
   text-align: left;
   transition: all 0.12s ease;
   display: flex;
   flex-direction: column;
-  gap: 0.15rem;
+  gap: 0.2rem;
 }
 
 .wpt-btn:hover {
@@ -333,18 +333,32 @@ code {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 0.25rem;
+}
+
+.wpt-entry-badge {
+  font-size: 0.73rem;
+  font-weight: 700;
+  color: var(--accent-amber);
+  background: rgba(251, 191, 36, 0.12);
+  padding: 0.06rem 0.35rem;
+  border-radius: 4px;
+  font-family: var(--font-mono);
 }
 
 .wpt-meta {
-  font-size: 0.7rem;
+  font-size: 0.71rem;
   color: var(--text-muted);
   font-family: var(--font-mono);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
 
 .wpt-tag {
   font-size: 0.62rem;
   font-weight: 700;
-  padding: 0.08rem 0.32rem;
+  padding: 0.06rem 0.3rem;
   border-radius: 4px;
   background: var(--accent-purple-bg);
   color: var(--accent-purple);
@@ -892,10 +906,6 @@ code {
   font-weight: 800;
 }
 
-.metric-pill strong {
-  color: var(--accent-amber);
-}
-
 .metric-pill.where-pill strong {
   color: var(--accent-red);
 }
@@ -907,6 +917,197 @@ code {
 .conflict-detail {
   font-size: 0.8rem;
   color: var(--text-muted);
+}
+
+/* SITE-NATIVE AYT TMA VECTOR CHART */
+.freq-badges {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.freq-pill {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.3rem 0.65rem;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.freq-pill strong {
+  color: var(--text-main);
+}
+
+.freq-pill.twr-pill {
+  border-color: rgba(52, 211, 153, 0.45);
+}
+
+.freq-pill.twr-pill strong {
+  color: var(--accent-green);
+}
+
+.svg-chart-container {
+  background: radial-gradient(circle at center, #111c32 0%, #090e1a 100%);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.75rem;
+  display: flex;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.ayt-svg-chart {
+  width: 100%;
+  max-width: 780px;
+  height: auto;
+  font-family: var(--font-mono);
+  user-select: none;
+}
+
+.tma-boundary-circle {
+  fill: rgba(30, 48, 82, 0.16);
+  stroke: #47689e;
+  stroke-width: 2;
+}
+
+.dme-ring-inner {
+  fill: none;
+  stroke: rgba(71, 104, 158, 0.3);
+  stroke-width: 1;
+  stroke-dasharray: 5 5;
+}
+
+.corridor-wall {
+  stroke: rgba(148, 163, 184, 0.35);
+  stroke-width: 1.4;
+}
+
+.airway-dashed {
+  stroke: rgba(148, 163, 184, 0.65);
+  stroke-width: 1.5;
+  stroke-dasharray: 7 6;
+}
+
+.inbound-track {
+  stroke: #f87171;
+  stroke-width: 2;
+  stroke-dasharray: 6 4;
+}
+
+.wpt-triangle {
+  fill: #38bdf8;
+  stroke: #0b111e;
+  stroke-width: 1.2;
+}
+
+.wpt-triangle-outer {
+  fill: #fbbf24;
+  stroke: #0b111e;
+  stroke-width: 1.2;
+}
+
+.wpt-triangle-fix {
+  fill: #f87171;
+}
+
+.chart-wpt-main {
+  fill: #f0f6fc;
+  font-size: 14px;
+  font-weight: 800;
+  text-anchor: middle;
+}
+
+.chart-wpt-outer {
+  fill: #fbbf24;
+  font-size: 13px;
+  font-weight: 800;
+  text-anchor: middle;
+}
+
+.chart-spec {
+  fill: #94a3b8;
+  font-size: 11px;
+  font-weight: 700;
+  text-anchor: middle;
+}
+
+.chart-radial {
+  fill: #38bdf8;
+  font-size: 11px;
+  font-weight: 800;
+  text-anchor: middle;
+}
+
+.chart-fix-label {
+  fill: #cbd5e1;
+  font-size: 10.5px;
+  font-weight: 700;
+}
+
+.chart-hold-min {
+  fill: #f87171;
+  font-size: 10px;
+  font-weight: 700;
+  text-anchor: middle;
+}
+
+.hold-racetrack {
+  fill: none;
+  stroke: #38bdf8;
+  stroke-width: 1.5;
+}
+
+.hold-racetrack-red {
+  fill: none;
+  stroke: #f87171;
+  stroke-width: 1.6;
+}
+
+.msa-box {
+  fill: rgba(11, 17, 30, 0.85);
+  stroke: #3b5380;
+  stroke-width: 1.3;
+}
+
+.msa-title {
+  fill: #94a3b8;
+  font-size: 10px;
+  font-weight: 700;
+  text-anchor: middle;
+}
+
+.msa-val {
+  fill: #f0f6fc;
+  font-size: 12px;
+  font-weight: 800;
+  text-anchor: middle;
+}
+
+.vor-label {
+  fill: #38bdf8;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.chart-corridor {
+  cursor: pointer;
+  transition: opacity 0.15s ease;
+}
+
+.chart-corridor:hover .chart-wpt-main {
+  fill: #38bdf8;
+}
+
+.chart-corridor.active-corridor .inbound-track {
+  stroke: #38bdf8;
+  stroke-width: 3;
+}
+
+.chart-corridor.active-corridor .chart-wpt-main {
+  fill: #38bdf8;
+  text-decoration: underline;
 }
 
 /* POSITION SNAPSHOT */
@@ -953,66 +1154,6 @@ code {
   font-size: 0.86rem;
   font-weight: 700;
   text-align: right;
-}
-
-/* MODAL */
-.modal-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgba(5, 9, 18, 0.82);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 1rem;
-  z-index: 100;
-}
-
-.modal-content {
-  background: var(--bg-card);
-  border: 1px solid var(--border-highlight);
-  border-radius: var(--radius);
-  max-width: 780px;
-  width: 100%;
-  max-height: 90vh;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-.modal-header {
-  padding: 0.9rem 1.15rem;
-  border-bottom: 1px solid var(--border);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.modal-header h2 {
-  font-size: 1rem;
-}
-
-.close-btn {
-  background: var(--bg-elevated);
-  border: 1px solid var(--border);
-  color: var(--text-main);
-  width: 32px;
-  height: 32px;
-  border-radius: 6px;
-  cursor: pointer;
-  font-weight: 700;
-}
-
-.modal-body {
-  padding: 1rem;
-  overflow-y: auto;
-  text-align: center;
-}
-
-.chart-img-wrap img {
-  max-width: 100%;
-  height: auto;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
 }
 
 /* RESPONSIVE */

@@ -7,77 +7,70 @@ const WAYPOINTS = [
   {
     id: "DERYA",
     name: "DERYA",
+    entryWpt: "TOMBİ",
     airway: "VA-16",
     radial: "R-170",
     fl: "FL070",
-    star: "DERYA 1A",
-    outer: "TOMBİ",
     msa: "3,000' / 12,000'",
     straightInRwy: "36",
   },
   {
     id: "KUMRU",
     name: "KUMRU",
+    entryWpt: "KFK",
     airway: "VA-16",
     radial: "R-350",
     fl: "FL120",
-    star: "KUMRU 1A",
-    outer: "KFK",
     msa: "10,000' / 9,000'",
     straightInRwy: "18",
   },
   {
     id: "BRONZ",
     name: "BRONZ",
+    entryWpt: "CRD",
     airway: "R-55",
     radial: "R-310",
     fl: "FL110",
-    star: "BRONZ 1A",
-    outer: "CRD",
     msa: "10,000'",
     straightInRwy: null,
   },
   {
     id: "ALPAY",
     name: "ALPAY",
+    entryWpt: "W-79",
     airway: "W-79",
     radial: "R-270",
     fl: "FL120",
-    star: "ALPAY 1A",
-    outer: "W-79",
     msa: "10,000' / 12,000'",
     straightInRwy: null,
   },
   {
     id: "DAMLA",
     name: "DAMLA",
+    entryWpt: "HİSAR",
     airway: "W-77",
     radial: "R-030",
     fl: "FL130",
-    star: "DAMLA 1A",
-    outer: "HİSAR",
     msa: "9,000'",
     straightInRwy: null,
   },
   {
     id: "KONAK",
     name: "KONAK",
+    entryWpt: "MUT",
     airway: "R-55",
     radial: "R-090",
     fl: "FL130",
-    star: "KONAK 1A",
-    outer: "MUT",
     msa: "9,000' / 3,000'",
     straightInRwy: null,
   },
   {
     id: "MANAV",
     name: "MANAV",
+    entryWpt: "DOREN",
     airway: "W-83",
     radial: "R-130",
     fl: "FL070",
-    star: "MANAV 1A",
-    outer: "DOREN",
     msa: "3,000'",
     straightInRwy: null,
   },
@@ -93,7 +86,7 @@ const state = {
   inputCallsign: "",
   approachMode: "auto", // 'auto' | 'normal' | 'straight'
   lookupTimeRaw: "10",
-  aircraftList: [], // Mix of ARR and DEP items ({ type: 'ARR' | 'DEP', ... })
+  aircraftList: [],
   nextId: 1,
 };
 
@@ -215,7 +208,7 @@ function isAircraftStraightIn(wptId, mode, activeRwy) {
 }
 
 // Arrival Checkpoints Calculation
-// Note: Manual delay (holdMins) ONLY shifts 10 DME Fix and Established time, keeping 10 NM unchanged!
+// Manual delay (holdMins) ONLY shifts 10 DME Fix and Established time, keeping 10 NM unchanged
 function calculateArrivalCheckpoints({ wptId, dist, timeRaw, mode, holdMins = 0 }, activeRwy) {
   const parsedTime = parseTimeInput(timeRaw);
   const tInit = parsedTime.totalMinutes;
@@ -229,20 +222,17 @@ function calculateArrivalCheckpoints({ wptId, dist, timeRaw, mode, holdMins = 0 
 
   const t25 = deltaTo25 !== null ? tInit + deltaTo25 : null;
   const t10 = tInit + deltaTo10;
-  // Time the aircraft would hit 0 NM (AYT VOR) along the radial
   const tRadialZero = tInit + d / SPEED_NM_PER_MIN;
 
   let tVor = null;
   let tFix = null;
   let tEst = null;
-  let tClear = null; // Point where plane can be cleared for ILS
+  let tClear = null;
 
   if (straightIn) {
-    // Straight-In: Cleared for ILS at 25 NM, Established at 10 NM (+ manual delay if any)
     tClear = t25 !== null ? t25 : tInit;
     tEst = t10 + hold;
   } else {
-    // Normal: Cleared for ILS at 10 NM, +2m VOR, +2m 10 DME Fix (+ manual delay), +5m Established
     tClear = t10;
     tVor = t10 + 2;
     tFix = tVor + 2 + hold;
@@ -276,14 +266,13 @@ function calculateDepartureCheckpoints({ wptId, timeRaw }) {
     wptId,
     hasHour,
     tDep,
-    t10: tDep + 10 / SPEED_NM_PER_MIN, // +2m
-    t25: tDep + 25 / SPEED_NM_PER_MIN, // +5m
-    t50: tDep + 50 / SPEED_NM_PER_MIN, // +10m
-    t60: tDep + 60 / SPEED_NM_PER_MIN, // +12m
+    t10: tDep + 10 / SPEED_NM_PER_MIN,
+    t25: tDep + 25 / SPEED_NM_PER_MIN,
+    t50: tDep + 50 / SPEED_NM_PER_MIN,
+    t60: tDep + 60 / SPEED_NM_PER_MIN,
   };
 }
 
-// Helper to normalize times if user mixed "05" and "10:05" in the same scenario
 function getReferenceBaseHour(items) {
   for (const item of items) {
     const p = parseTimeInput(item.timeRaw);
@@ -302,11 +291,7 @@ function normalizeTime(mins, hasHour, refHour) {
 }
 
 // Compute "Will Delay?" for all arriving aircraft
-// Rule: If at the point where you can CLEAR a plane for ILS (10 NM for Normal, 25 NM for Straight-In),
-// there is ANOTHER plane that has been cleared BUT NOT ESTABLISHED yet, this plane WILL BE DELAYED.
-// Takes into account manual delay added on the checkpoint sheet (which shifts Established time).
 function computeArrivalDelays(computedArrivals, refHour) {
-  // Map with normalized times for comparison
   const list = computedArrivals.map((item) => {
     const normClear = normalizeTime(item.calc.tClear, item.calc.hasHour, refHour);
     const normEst = normalizeTime(item.calc.tEst, item.calc.hasHour, refHour);
@@ -317,7 +302,6 @@ function computeArrivalDelays(computedArrivals, refHour) {
     };
   });
 
-  // Sort by ILS clearance point time (tie-breaker: initial report time, then id)
   const sorted = [...list].sort((a, b) => {
     if (a.normClear !== b.normClear) return a.normClear - b.normClear;
     return a.acft.id - b.acft.id;
@@ -331,8 +315,6 @@ function computeArrivalDelays(computedArrivals, refHour) {
 
     for (let j = 0; j < i; j++) {
       const earlier = sorted[j];
-      // Earlier plane reached its clearance point at or before current plane's clearance point,
-      // AND earlier plane is NOT YET ESTABLISHED when current plane reaches its clearance point:
       if (earlier.normClear <= current.normClear && current.normClear < earlier.normEst) {
         blockers.push(earlier);
       }
@@ -348,10 +330,6 @@ function computeArrivalDelays(computedArrivals, refHour) {
 }
 
 // Compute Head-On Conflicts between Departing and Arriving Aircraft on the same Waypoint
-// Arrival: starts at D_arr0 at T_arr0, flies inbound towards 0 NM at 5 NM/min -> reaches 0 NM at T_arrAt0 = T_arr0 + D_arr0/5
-// Departure: starts at 0 NM at T_dep, flies outbound at 5 NM/min
-// Crossing time: t_conflict = (T_dep + T_arrAt0) / 2
-// Crossing distance: D_conflict = 5 * (t_conflict - T_dep)
 function computeDepArrConflicts(computedArrivals, computedDepartures, refHour) {
   const conflicts = [];
 
@@ -363,22 +341,17 @@ function computeDepArrConflicts(computedArrivals, computedDepartures, refHour) {
     matchingArrivals.forEach((arrItem) => {
       const useHasHour = depItem.calc.hasHour || arrItem.calc.hasHour;
       const tDepNorm = normalizeTime(depItem.calc.tDep, depItem.calc.hasHour, refHour);
-      const tArrInitNorm = normalizeTime(arrItem.calc.tInit, arrItem.calc.hasHour, refHour);
       const tArrZeroNorm = normalizeTime(arrItem.calc.tRadialZero, arrItem.calc.hasHour, refHour);
 
-      // Crossing calculation
       const tCrossNorm = (tDepNorm + tArrZeroNorm) / 2;
       const dCross = SPEED_NM_PER_MIN * (tCrossNorm - tDepNorm);
 
-      // Convert tCrossNorm back to display format
       const displayTime = formatTime(
         useHasHour ? tCrossNorm : tCrossNorm - (refHour ? refHour * 60 : 0),
         useHasHour
       );
 
       const dCrossRounded = +dCross.toFixed(1);
-
-      // Check if conflict occurs while arrival is inbound to 0 NM (dCross >= 0)
       const isValidInboundConflict = dCross >= 0 && dCross <= Math.max(arrItem.calc.dist, 60);
 
       conflicts.push({
@@ -400,7 +373,6 @@ function computeDepArrConflicts(computedArrivals, computedDepartures, refHour) {
   return conflicts;
 }
 
-// Estimate exact position of an arrival or departure at query time T_q
 function estimatePositionAtTime(item, queryMins) {
   if (item.acft.type === "DEP") {
     const { tDep } = item.calc;
@@ -414,12 +386,11 @@ function estimatePositionAtTime(item, queryMins) {
     const elapsed = queryMins - tDep;
     const dme = +(elapsed * SPEED_NM_PER_MIN).toFixed(1);
     return {
-      text: `${dme} NM outbound on ${item.wpt.name}`,
+      text: `${dme} NM outbound on ${item.wpt.name} (${item.wpt.entryWpt})`,
       color: "var(--accent-amber)",
     };
   }
 
-  // Arrival
   const { dist: d, tInit, t10, tVor, tFix, tEst, straightIn, holdMins } = item.calc;
 
   if (queryMins < tInit) {
@@ -453,7 +424,6 @@ function estimatePositionAtTime(item, queryMins) {
     };
   }
 
-  // Normal Arrival
   if (queryMins <= tVor) {
     const elapsed = queryMins - tInit;
     const currentDme = Math.max(0, +(d - elapsed * SPEED_NM_PER_MIN).toFixed(1));
@@ -503,7 +473,7 @@ function estimatePositionAtTime(item, queryMins) {
   };
 }
 
-// Render Waypoint Buttons
+// Render Waypoint Buttons (with TMA Waypoint + Entry Fix e.g. KUMRU / KFK)
 function renderWaypointGrid() {
   const container = document.getElementById("wptGrid");
   container.innerHTML = "";
@@ -520,18 +490,31 @@ function renderWaypointGrid() {
     btn.innerHTML = `
       <div class="wpt-name">
         <span>${wpt.name}</span>
+        <span class="wpt-entry-badge">${wpt.entryWpt}</span>
+      </div>
+      <div class="wpt-meta">
+        <span>${wpt.airway} • ${wpt.radial} • ${wpt.fl}</span>
         ${isStraightForCurrentRwy ? `<span class="wpt-tag">STR-IN</span>` : ""}
       </div>
-      <div class="wpt-meta">${wpt.airway} • ${wpt.radial} • ${wpt.fl}</div>
     `;
 
     btn.addEventListener("click", () => {
       state.selectedWpt = wpt.id;
       renderWaypointGrid();
+      syncSvgChartSelection();
       renderLivePreview();
     });
 
     container.appendChild(btn);
+  });
+
+  syncSvgChartSelection();
+}
+
+function syncSvgChartSelection() {
+  document.querySelectorAll(".chart-corridor").forEach((el) => {
+    const wpt = el.getAttribute("data-wpt");
+    el.classList.toggle("active-corridor", wpt === state.selectedWpt);
   });
 }
 
@@ -555,7 +538,7 @@ function renderLivePreview() {
       <div class="preview-header">
         <div class="preview-title">
           <span class="badge badge-dep">🛫 OUTBOUND DEPARTURE</span>
-          <span><strong>${callsignLabel}</strong> headed to <strong>${wptObj.name}</strong> (${wptObj.airway} • ${wptObj.radial})</span>
+          <span><strong>${callsignLabel}</strong> → <strong>${wptObj.name} (${wptObj.entryWpt})</strong> • ${wptObj.airway} • ${wptObj.radial}</span>
         </div>
         <span class="step-delta">Starts at 0 NM (AYT) • 5 NM / 1 min</span>
       </div>
@@ -585,7 +568,6 @@ function renderLivePreview() {
     return;
   }
 
-  // Arrival Live Preview
   const calc = calculateArrivalCheckpoints(
     {
       wptId: state.selectedWpt,
@@ -603,7 +585,7 @@ function renderLivePreview() {
         <span class="badge ${calc.straightIn ? "badge-straight" : "badge-normal"}">
           ${calc.straightIn ? `⚡ STRAIGHT-IN (RWY ${state.activeRwy})` : `📐 NORMAL (RWY ${state.activeRwy})`}
         </span>
-        <span><strong>${callsignLabel}</strong> via <strong>${wptObj.name}</strong> (${wptObj.airway} • ${wptObj.radial} • ${wptObj.fl})</span>
+        <span><strong>${callsignLabel}</strong> via <strong>${wptObj.name} (${wptObj.entryWpt})</strong> • ${wptObj.airway} • ${wptObj.radial} • ${wptObj.fl}</span>
       </div>
       <span class="step-delta">Total to Established: <strong>+${calc.tEst - calc.tInit} min</strong></span>
     </div>
@@ -664,7 +646,7 @@ function renderScenarioBoard() {
 
   summaryText.textContent = `${computedArrivals.length} Arrival(s), ${computedDepartures.length} Departure(s) • Active Runway: RWY ${state.activeRwy}`;
 
-  // 1. Render Arrivals Table (Clean Numbers Only!)
+  // 1. Render Arrivals Table (Clean Numbers Only)
   if (computedArrivals.length === 0) {
     arrTbody.innerHTML = `
       <tr class="empty-row">
@@ -679,7 +661,7 @@ function renderScenarioBoard() {
 
       tr.innerHTML = `
         <td class="callsign-cell">${acft.callsign}</td>
-        <td class="wpt-cell">${wpt.name}</td>
+        <td class="wpt-cell">${wpt.name} <span class="wpt-entry-badge">${wpt.entryWpt}</span></td>
         <td>
           <button type="button" class="badge ${
             calc.straightIn ? "badge-straight" : "badge-normal"
@@ -731,7 +713,7 @@ function renderScenarioBoard() {
       const tr = document.createElement("tr");
       tr.innerHTML = `
         <td class="callsign-cell">${acft.callsign}</td>
-        <td class="wpt-cell">${wpt.name}</td>
+        <td class="wpt-cell">${wpt.name} <span class="wpt-entry-badge">${wpt.entryWpt}</span></td>
         <td class="time-cell">${formatTime(calc.tDep, calc.hasHour)}</td>
         <td class="time-cell">${formatTime(calc.t10, calc.hasHour)}</td>
         <td class="time-cell">${formatTime(calc.t25, calc.hasHour)}</td>
@@ -745,7 +727,7 @@ function renderScenarioBoard() {
     });
   }
 
-  // Wire up table buttons (Delete, Hold/Delay, Mode Toggle)
+  // Wire up table buttons
   document.querySelectorAll("[data-del-id]").forEach((btn) => {
     btn.addEventListener("click", () => {
       const id = Number(btn.getAttribute("data-del-id"));
@@ -781,10 +763,7 @@ function renderScenarioBoard() {
     });
   });
 
-  // 3. Render Conflicts & Delays Section
   renderConflictsAndDelays(computedArrivals, computedDepartures, delayMap, refHour);
-
-  // 4. Render Position Estimator at Time T
   renderPositionLookup([...computedArrivals, ...computedDepartures], refHour);
 }
 
@@ -793,7 +772,6 @@ function renderConflictsAndDelays(computedArrivals, computedDepartures, delayMap
   const depArrListEl = document.getElementById("depArrConflictList");
   const ilsDelayListEl = document.getElementById("ilsDelayList");
 
-  // Part A: Departure <-> Arrival Head-On Conflicts on same waypoint
   const depArrConflicts = computeDepArrConflicts(computedArrivals, computedDepartures, refHour);
 
   if (depArrConflicts.length === 0) {
@@ -813,7 +791,7 @@ function renderConflictsAndDelays(computedArrivals, computedDepartures, delayMap
         box.innerHTML = `
           <div class="conflict-top">
             <span class="conflict-pair">🛫 ${c.depAcft.callsign} ↔ 🛬 ${c.arrAcft.callsign}</span>
-            <span class="badge badge-delayed">${c.wpt.name} (${c.wpt.airway})</span>
+            <span class="badge badge-delayed">${c.wpt.name} / ${c.wpt.entryWpt} (${c.wpt.airway})</span>
           </div>
           <div class="conflict-metrics">
             <div class="metric-pill where-pill">📍 WHERE: <strong>${c.dCross} NM (${c.wpt.name})</strong></div>
@@ -839,7 +817,6 @@ function renderConflictsAndDelays(computedArrivals, computedDepartures, delayMap
     });
   }
 
-  // Part B: Arrival ILS Clearance Delays
   if (computedArrivals.length === 0) {
     ilsDelayListEl.innerHTML = `
       <div class="conflict-box">
@@ -869,7 +846,7 @@ function renderConflictsAndDelays(computedArrivals, computedDepartures, delayMap
         box.className = "conflict-box alert-danger";
         box.innerHTML = `
           <div class="conflict-top">
-            <span class="conflict-pair">🛬 ${acft.callsign} (${wpt.name})</span>
+            <span class="conflict-pair">🛬 ${acft.callsign} (${wpt.name} / ${wpt.entryWpt})</span>
             <span class="badge badge-delayed">WILL HAVE DELAY</span>
           </div>
           <div class="conflict-detail">
@@ -880,7 +857,7 @@ function renderConflictsAndDelays(computedArrivals, computedDepartures, delayMap
         box.className = "conflict-box alert-safe";
         box.innerHTML = `
           <div class="conflict-top">
-            <span class="conflict-pair">🛬 ${acft.callsign} (${wpt.name})</span>
+            <span class="conflict-pair">🛬 ${acft.callsign} (${wpt.name} / ${wpt.entryWpt})</span>
             <span class="badge badge-nodelay">NO DELAY</span>
           </div>
           <div class="conflict-detail">
@@ -895,7 +872,6 @@ function renderConflictsAndDelays(computedArrivals, computedDepartures, delayMap
   }
 }
 
-// Render "Where is every aircraft at time T?"
 function renderPositionLookup(allComputed, refHour) {
   const listEl = document.getElementById("positionSnapshotList");
   if (allComputed.length === 0) {
@@ -930,7 +906,7 @@ function renderPositionLookup(allComputed, refHour) {
             : calc.straightIn
             ? "badge-straight"
             : "badge-normal"
-        }">${acft.type === "DEP" ? `DEP → ${wpt.name}` : wpt.name}</span>
+        }">${acft.type === "DEP" ? `DEP → ${wpt.name} (${wpt.entryWpt})` : `${wpt.name} (${wpt.entryWpt})`}</span>
       </div>
       <div class="snapshot-status" style="color: ${pos.color}">${pos.text}</div>
     `;
@@ -938,7 +914,6 @@ function renderPositionLookup(allComputed, refHour) {
   });
 }
 
-// Initialize App & Event Listeners
 function initApp() {
   loadSavedState();
 
@@ -962,8 +937,8 @@ function initApp() {
     approachOverrideGroup.classList.toggle("hidden", isDep);
 
     wptFieldLabel.textContent = isDep
-      ? "1. Departure Waypoint / Airway"
-      : "1. Entry Waypoint / STAR";
+      ? "1. Departure Waypoint / Exit Fix"
+      : "1. Waypoint / Entry Fix";
     timeFieldLabel.innerHTML = isDep
       ? `2. Departure Time at 0 NM <span class="hint">(e.g. <code>04</code> or <code>10:04</code>)</span>`
       : `3. Report Time <span class="hint">(e.g. <code>0</code>, <code>05</code>, or <code>10:05</code>)</span>`;
@@ -1010,7 +985,6 @@ function initApp() {
     updateRwyUI();
   });
 
-  // Distance Preset Buttons & Custom Input
   const inputDist = document.getElementById("inputDist");
   const presetBtns = document.querySelectorAll(".preset-btn");
 
@@ -1036,7 +1010,6 @@ function initApp() {
     renderLivePreview();
   });
 
-  // Time Input & Step Buttons
   const inputTime = document.getElementById("inputTime");
   inputTime.addEventListener("input", () => {
     state.inputTimeRaw = inputTime.value;
@@ -1058,14 +1031,12 @@ function initApp() {
     });
   });
 
-  // Callsign Input
   const inputCallsign = document.getElementById("inputCallsign");
   inputCallsign.addEventListener("input", () => {
     state.inputCallsign = inputCallsign.value;
     renderLivePreview();
   });
 
-  // Approach Mode Override Buttons
   const modeBtns = document.querySelectorAll(".mode-btn");
   modeBtns.forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -1075,7 +1046,6 @@ function initApp() {
     });
   });
 
-  // Add Aircraft Form Submit
   const aircraftForm = document.getElementById("aircraftForm");
   aircraftForm.addEventListener("submit", (e) => {
     e.preventDefault();
@@ -1103,7 +1073,6 @@ function initApp() {
     renderScenarioBoard();
   });
 
-  // Scenario Sort & Clear Buttons
   document.getElementById("btnSortByEst").addEventListener("click", () => {
     const refHour = getReferenceBaseHour(state.aircraftList);
     state.aircraftList.sort((a, b) => {
@@ -1148,7 +1117,6 @@ function initApp() {
     renderScenarioBoard();
   });
 
-  // Lookup Time Input & Steppers
   const lookupTimeInput = document.getElementById("lookupTimeInput");
   lookupTimeInput.addEventListener("input", () => {
     state.lookupTimeRaw = lookupTimeInput.value;
@@ -1170,18 +1138,21 @@ function initApp() {
     });
   });
 
-  // Chart Modal
-  const chartModal = document.getElementById("chartModal");
+  // Scroll to native chart on button click
   document.getElementById("btnToggleChart").addEventListener("click", () => {
-    chartModal.classList.remove("hidden");
+    document.getElementById("nativeChartSection").scrollIntoView({ behavior: "smooth" });
   });
-  document.getElementById("btnCloseChart").addEventListener("click", () => {
-    chartModal.classList.add("hidden");
-  });
-  chartModal.addEventListener("click", (e) => {
-    if (e.target === chartModal) {
-      chartModal.classList.add("hidden");
-    }
+
+  // Interactive native SVG chart corridors
+  document.querySelectorAll(".chart-corridor").forEach((corridor) => {
+    corridor.addEventListener("click", () => {
+      const wpt = corridor.getAttribute("data-wpt");
+      if (wpt) {
+        state.selectedWpt = wpt;
+        renderWaypointGrid();
+        renderLivePreview();
+      }
+    });
   });
 
   syncFormModeUI();
