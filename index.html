@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>AYT TMA Radarless Approach Calculator</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="top-bar">
+    <div class="brand">
+      <div class="brand-badge">AYT TMA</div>
+      <div>
+        <h1>Radarless Approach Calculator</h1>
+        <p class="subtitle">5 NM / min (300 kt) • Standard &amp; VA-16 Straight-In</p>
+      </div>
+    </div>
+
+    <div class="top-controls">
+      <div class="rwy-selector" role="group" aria-label="Active Runway">
+        <span class="rwy-label">ACTIVE RWY</span>
+        <button type="button" id="btnRwy36" class="rwy-btn active" data-rwy="36">
+          RWY 36
+          <small>DERYA Straight-In</small>
+        </button>
+        <button type="button" id="btnRwy18" class="rwy-btn" data-rwy="18">
+          RWY 18
+          <small>KUMRU Straight-In</small>
+        </button>
+      </div>
+
+      <button type="button" id="btnToggleChart" class="secondary-btn">
+        <span>🗺️ AYT Chart &amp; Freqs</span>
+      </button>
+    </div>
+  </header>
+
+  <main class="container">
+    <!-- QUICK CALCULATOR & ADD AIRCRAFT PANEL -->
+    <section class="card entry-card">
+      <div class="card-header">
+        <h2>✈️ Instant Calculator &amp; Add to Scenario</h2>
+        <span class="speed-pill">Speed: 5 NM / 1 min</span>
+      </div>
+
+      <form id="aircraftForm" autocomplete="off">
+        <div class="form-grid">
+          <!-- 1. Waypoint / Airway Quick Select -->
+          <div class="field-group waypoint-group">
+            <label class="field-label">1. Entry Waypoint / STAR</label>
+            <div class="wpt-grid" id="wptGrid">
+              <!-- Populated by JS -->
+            </div>
+          </div>
+
+          <!-- 2. Initial Distance -->
+          <div class="field-group dist-group">
+            <label class="field-label" for="inputDist">2. First Report Distance (NM)</label>
+            <div class="dist-controls">
+              <button type="button" class="preset-btn active" data-dist="60">60 NM</button>
+              <button type="button" class="preset-btn" data-dist="50">50 NM</button>
+              <button type="button" class="preset-btn" data-dist="45">45 NM</button>
+              <button type="button" class="preset-btn" data-dist="40">40 NM</button>
+              <div class="custom-dist-wrap">
+                <input type="number" id="inputDist" value="60" min="10" max="150" step="1" aria-label="Distance in NM" />
+                <span class="unit">NM</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- 3. Initial Time -->
+          <div class="field-group time-group">
+            <label class="field-label" for="inputTime">
+              3. Report Time <span class="hint">(e.g. <code>0</code>, <code>05</code>, or <code>10:05</code>)</span>
+            </label>
+            <div class="time-input-row">
+              <input
+                type="text"
+                id="inputTime"
+                placeholder="00 or 10:00"
+                value="00"
+                inputmode="text"
+                required
+              />
+              <div class="quick-time-btns">
+                <button type="button" class="time-step-btn" data-step="-1">-1m</button>
+                <button type="button" class="time-step-btn" data-step="1">+1m</button>
+                <button type="button" class="time-step-btn" data-step="2">+2m</button>
+                <button type="button" class="time-step-btn" data-step="5">+5m</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 4. Callsign & Approach Override -->
+          <div class="field-group meta-group">
+            <label class="field-label" for="inputCallsign">4. Callsign (Optional) &amp; Type</label>
+            <div class="meta-row">
+              <input
+                type="text"
+                id="inputCallsign"
+                placeholder="e.g. THY123"
+                maxlength="12"
+              />
+              <div class="approach-override" role="group" aria-label="Approach Type">
+                <button type="button" id="btnModeAuto" class="mode-btn active" data-mode="auto">Auto Rule</button>
+                <button type="button" id="btnModeNormal" class="mode-btn" data-mode="normal">Force Normal</button>
+                <button type="button" id="btnModeStraight" class="mode-btn" data-mode="straight">Force Straight-In</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- LIVE INSTANT RESULT BAR -->
+        <div class="live-preview" id="livePreview">
+          <!-- Populated dynamically as you type -->
+        </div>
+
+        <div class="form-actions">
+          <button type="submit" class="primary-btn">
+            <span>➕ Add Aircraft to Scenario Sheet (Enter)</span>
+          </button>
+        </div>
+      </form>
+    </section>
+
+    <!-- SCENARIO SHEET (ALL AIRCRAFT CHECKPOINT TABLE) -->
+    <section class="card scenario-card">
+      <div class="card-header scenario-header">
+        <div>
+          <h2>📋 Scenario Checkpoint Sheet</h2>
+          <p class="card-sub" id="scenarioSummaryText">Add aircraft above to compare all checkpoint times side-by-side.</p>
+        </div>
+        <div class="scenario-actions">
+          <button type="button" id="btnSortByEst" class="small-btn" title="Sort by Established / TWR time">
+            Sort by Established ⇅
+          </button>
+          <button type="button" id="btnSortByInit" class="small-btn" title="Sort by Initial Report time">
+            Sort by Start Time ⇅
+          </button>
+          <button type="button" id="btnClearAll" class="small-btn danger-btn">
+            🗑️ Clear Scenario
+          </button>
+        </div>
+      </div>
+
+      <div class="table-responsive">
+        <table class="checkpoint-table" id="scenarioTable">
+          <thead>
+            <tr>
+              <th>Aircraft</th>
+              <th>WPT / Airway</th>
+              <th>Approach</th>
+              <th>Initial Report</th>
+              <th>25 NM</th>
+              <th>10 NM</th>
+              <th>AYT VOR</th>
+              <th>10 DME FIX</th>
+              <th>Established → TWR</th>
+              <th>Hold / Adjust</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="scenarioTableBody">
+            <!-- Populated by JS -->
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- TWO-COLUMN BOTTOM: WHERE ARE THEY NOW + CHRONOLOGICAL RADIO TIMELINE -->
+    <div class="bottom-grid">
+      <!-- LIVE POSITION ESTIMATOR AT TIME T -->
+      <section class="card">
+        <div class="card-header">
+          <h2>🎯 Position Estimator at Time <code>T</code></h2>
+          <span class="badge-subtle">5 NM = 1 min</span>
+        </div>
+        <p class="card-sub">Enter any minute to see the exact DME distance or procedure leg of every aircraft in the scenario.</p>
+        <div class="lookup-controls">
+          <label for="lookupTimeInput">Check Time:</label>
+          <input type="text" id="lookupTimeInput" value="10" placeholder="e.g. 10 or 10:10" />
+          <button type="button" class="time-step-btn lookup-step" data-step="-1">-1m</button>
+          <button type="button" class="time-step-btn lookup-step" data-step="1">+1m</button>
+          <button type="button" class="time-step-btn lookup-step" data-step="5">+5m</button>
+        </div>
+        <div id="positionSnapshotList" class="snapshot-list">
+          <!-- Populated by JS -->
+        </div>
+      </section>
+
+      <!-- CHRONOLOGICAL RADIO / ACTION TIMELINE -->
+      <section class="card">
+        <div class="card-header">
+          <h2>⏱️ Chronological Action Timeline</h2>
+          <span class="badge-subtle">Ordered by Time</span>
+        </div>
+        <p class="card-sub">Every pilot report, ILS clearance, overhead VOR, 10 DME fix, and TWR handoff in chronological order.</p>
+        <div id="chronologicalFeed" class="timeline-feed">
+          <!-- Populated by JS -->
+        </div>
+      </section>
+    </div>
+
+    <!-- QUICK RULES & FREQUENCIES REFERENCE FOOTER -->
+    <section class="card rules-card">
+      <div class="rules-grid">
+        <div class="rule-box">
+          <h3>📐 Standard Approach (Normal)</h3>
+          <ol>
+            <li><strong>First Report (60 or 50 NM):</strong> Instruct to report <strong>25 NM</strong>. (<code>60→25 = +7m</code>, <code>50→25 = +5m</code>)</li>
+            <li><strong>25 NM:</strong> Instruct to report <strong>10 NM</strong>. (<code>25→10 = +3m</code>)</li>
+            <li><strong>10 NM:</strong> <strong>Clear for ILS</strong>. Flies <code>+2m</code> to <strong>AYT VOR</strong>.</li>
+            <li><strong>AYT VOR:</strong> Flies <code>+2m</code> outbound to <strong>10 DME FIX</strong>.</li>
+            <li><strong>10 DME FIX:</strong> Flies <code>+5m</code> procedure/base turn → <strong>Full Established &amp; Sent to TWR (118.1)</strong>.</li>
+          </ol>
+        </div>
+        <div class="rule-box straight-rule-box">
+          <h3>⚡ Straight-In Exceptions (Airway VA-16)</h3>
+          <ul>
+            <li><strong>RWY 36 Active + South (DERYA / R-170):</strong> Straight-In to RWY 36</li>
+            <li><strong>RWY 18 Active + North (KUMRU / R-350):</strong> Straight-In to RWY 18</li>
+          </ul>
+          <ol>
+            <li><strong>First Report (60 or 50 NM):</strong> Instruct to report <strong>25 NM</strong>. (<code>60→25 = +7m</code>, <code>50→25 = +5m</code>)</li>
+            <li><strong>25 NM:</strong> <strong>Clear for ILS</strong> directly!</li>
+            <li><strong>10 NM (<code>+3m</code> after 25 NM):</strong> <strong>Full Established &amp; Sent to TWR (118.1)</strong> (No VOR overhead or 5-min procedure turn).</li>
+          </ol>
+        </div>
+        <div class="rule-box freq-box">
+          <h3>📻 AYT TMA Frequencies &amp; MSAs</h3>
+          <div class="freq-list">
+            <div><span>AYT TWR:</span> <strong>118.1</strong></div>
+            <div><span>ANK ACC:</span> <strong>131.05</strong></div>
+            <div><span>ERCAN ACC:</span> <strong>126.7</strong></div>
+          </div>
+          <div class="msa-list">
+            <div><span>NW (R-270–R-350):</span> <strong>10,000'</strong></div>
+            <div><span>NE (R-350–R-090):</span> <strong>9,000'</strong></div>
+            <div><span>SE (R-090–R-170):</span> <strong>3,000'</strong></div>
+            <div><span>SW (R-170–R-270):</span> <strong>12,000'</strong></div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- CHART MODAL -->
+  <div id="chartModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="chartModalTitle">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 id="chartModalTitle">AYT TMA RWY 36 STARs &amp; Airway Reference Chart</h2>
+        <button type="button" id="btnCloseChart" class="close-btn" aria-label="Close chart">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="chart-img-wrap">
+          <img src="chart.png" alt="AYT TMA RWY 36 STARs Chart" />
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
