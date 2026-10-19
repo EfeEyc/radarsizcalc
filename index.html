@@ -12,7 +12,7 @@
       <div class="brand-badge">AYT TMA</div>
       <div>
         <h1>Radarless Approach Calculator</h1>
-        <p class="subtitle">5 NM / min (300 kt) • Standard &amp; VA-16 Straight-In</p>
+        <p class="subtitle">5 NM / min (300 kt) • Arrivals, Departures &amp; Conflict Detection</p>
       </div>
     </div>
 
@@ -39,7 +39,17 @@
     <!-- QUICK CALCULATOR & ADD AIRCRAFT PANEL -->
     <section class="card entry-card">
       <div class="card-header">
-        <h2>✈️ Instant Calculator &amp; Add to Scenario</h2>
+        <div class="header-with-tabs">
+          <h2>✈️ Calculator &amp; Add Aircraft</h2>
+          <div class="flight-type-tabs" role="group" aria-label="Flight Type">
+            <button type="button" id="tabArrival" class="type-tab active" data-type="ARR">
+              🛬 Arrival (Landing)
+            </button>
+            <button type="button" id="tabDeparture" class="type-tab" data-type="DEP">
+              🛫 Departure (From 0 NM)
+            </button>
+          </div>
+        </div>
         <span class="speed-pill">Speed: 5 NM / 1 min</span>
       </div>
 
@@ -47,64 +57,66 @@
         <div class="form-grid">
           <!-- 1. Waypoint / Airway Quick Select -->
           <div class="field-group waypoint-group">
-            <label class="field-label">1. Entry Waypoint / STAR</label>
+            <label class="field-label" id="wptFieldLabel">1. Entry Waypoint / STAR</label>
             <div class="wpt-grid" id="wptGrid">
               <!-- Populated by JS -->
             </div>
           </div>
 
-          <!-- 2. Initial Distance -->
-          <div class="field-group dist-group">
-            <label class="field-label" for="inputDist">2. First Report Distance (NM)</label>
-            <div class="dist-controls">
-              <button type="button" class="preset-btn active" data-dist="60">60 NM</button>
-              <button type="button" class="preset-btn" data-dist="50">50 NM</button>
-              <button type="button" class="preset-btn" data-dist="45">45 NM</button>
-              <button type="button" class="preset-btn" data-dist="40">40 NM</button>
-              <div class="custom-dist-wrap">
-                <input type="number" id="inputDist" value="60" min="10" max="150" step="1" aria-label="Distance in NM" />
-                <span class="unit">NM</span>
+          <div class="right-fields-stack">
+            <!-- 2. Initial Distance (Hidden when Departure is selected, since Departures start at 0 NM) -->
+            <div class="field-group dist-group" id="distFieldGroup">
+              <label class="field-label" for="inputDist">2. First Report Distance (NM)</label>
+              <div class="dist-controls">
+                <button type="button" class="preset-btn active" data-dist="60">60 NM</button>
+                <button type="button" class="preset-btn" data-dist="50">50 NM</button>
+                <button type="button" class="preset-btn" data-dist="45">45 NM</button>
+                <button type="button" class="preset-btn" data-dist="40">40 NM</button>
+                <div class="custom-dist-wrap">
+                  <input type="number" id="inputDist" value="60" min="5" max="150" step="1" aria-label="Distance in NM" />
+                  <span class="unit">NM</span>
+                </div>
               </div>
             </div>
-          </div>
 
-          <!-- 3. Initial Time -->
-          <div class="field-group time-group">
-            <label class="field-label" for="inputTime">
-              3. Report Time <span class="hint">(e.g. <code>0</code>, <code>05</code>, or <code>10:05</code>)</span>
-            </label>
-            <div class="time-input-row">
-              <input
-                type="text"
-                id="inputTime"
-                placeholder="00 or 10:00"
-                value="00"
-                inputmode="text"
-                required
-              />
-              <div class="quick-time-btns">
-                <button type="button" class="time-step-btn" data-step="-1">-1m</button>
-                <button type="button" class="time-step-btn" data-step="1">+1m</button>
-                <button type="button" class="time-step-btn" data-step="2">+2m</button>
-                <button type="button" class="time-step-btn" data-step="5">+5m</button>
+            <!-- 3. Time Input -->
+            <div class="field-group time-group">
+              <label class="field-label" for="inputTime" id="timeFieldLabel">
+                3. Report Time <span class="hint">(e.g. <code>0</code>, <code>05</code>, or <code>10:05</code>)</span>
+              </label>
+              <div class="time-input-row">
+                <input
+                  type="text"
+                  id="inputTime"
+                  placeholder="00 or 10:00"
+                  value="00"
+                  inputmode="text"
+                  required
+                />
+                <div class="quick-time-btns">
+                  <button type="button" class="time-step-btn" data-step="-1">-1m</button>
+                  <button type="button" class="time-step-btn" data-step="1">+1m</button>
+                  <button type="button" class="time-step-btn" data-step="2">+2m</button>
+                  <button type="button" class="time-step-btn" data-step="5">+5m</button>
+                </div>
               </div>
             </div>
-          </div>
 
-          <!-- 4. Callsign & Approach Override -->
-          <div class="field-group meta-group">
-            <label class="field-label" for="inputCallsign">4. Callsign (Optional) &amp; Type</label>
-            <div class="meta-row">
-              <input
-                type="text"
-                id="inputCallsign"
-                placeholder="e.g. THY123"
-                maxlength="12"
-              />
-              <div class="approach-override" role="group" aria-label="Approach Type">
-                <button type="button" id="btnModeAuto" class="mode-btn active" data-mode="auto">Auto Rule</button>
-                <button type="button" id="btnModeNormal" class="mode-btn" data-mode="normal">Force Normal</button>
-                <button type="button" id="btnModeStraight" class="mode-btn" data-mode="straight">Force Straight-In</button>
+            <!-- 4. Callsign & Approach Override -->
+            <div class="field-group meta-group">
+              <label class="field-label" for="inputCallsign" id="metaFieldLabel">4. Callsign (Optional) &amp; Approach Type</label>
+              <div class="meta-row">
+                <input
+                  type="text"
+                  id="inputCallsign"
+                  placeholder="e.g. THY123"
+                  maxlength="12"
+                />
+                <div class="approach-override" id="approachOverrideGroup" role="group" aria-label="Approach Type">
+                  <button type="button" id="btnModeAuto" class="mode-btn active" data-mode="auto">Auto Rule</button>
+                  <button type="button" id="btnModeNormal" class="mode-btn" data-mode="normal">Normal</button>
+                  <button type="button" id="btnModeStraight" class="mode-btn" data-mode="straight">Straight-In</button>
+                </div>
               </div>
             </div>
           </div>
@@ -116,22 +128,22 @@
         </div>
 
         <div class="form-actions">
-          <button type="submit" class="primary-btn">
-            <span>➕ Add Aircraft to Scenario Sheet (Enter)</span>
+          <button type="submit" class="primary-btn" id="btnSubmitAircraft">
+            <span>➕ Add Arrival to Scenario Sheet (Enter)</span>
           </button>
         </div>
       </form>
     </section>
 
-    <!-- SCENARIO SHEET (ALL AIRCRAFT CHECKPOINT TABLE) -->
+    <!-- SCENARIO CHECKPOINT SHEET -->
     <section class="card scenario-card">
       <div class="card-header scenario-header">
         <div>
           <h2>📋 Scenario Checkpoint Sheet</h2>
-          <p class="card-sub" id="scenarioSummaryText">Add aircraft above to compare all checkpoint times side-by-side.</p>
+          <p class="card-sub" id="scenarioSummaryText">Clean checkpoint numbers. Manual delay shifts 10 DME Fix &amp; Established time.</p>
         </div>
         <div class="scenario-actions">
-          <button type="button" id="btnSortByEst" class="small-btn" title="Sort by Established / TWR time">
+          <button type="button" id="btnSortByEst" class="small-btn" title="Sort by Established time">
             Sort by Established ⇅
           </button>
           <button type="button" id="btnSortByInit" class="small-btn" title="Sort by Initial Report time">
@@ -143,20 +155,22 @@
         </div>
       </div>
 
+      <!-- ARRIVALS TABLE -->
       <div class="table-responsive">
         <table class="checkpoint-table" id="scenarioTable">
           <thead>
             <tr>
               <th>Aircraft</th>
-              <th>WPT / Airway</th>
+              <th>WPT</th>
               <th>Approach</th>
-              <th>Initial Report</th>
+              <th>Initial</th>
               <th>25 NM</th>
               <th>10 NM</th>
               <th>AYT VOR</th>
               <th>10 DME FIX</th>
-              <th>Established → TWR</th>
-              <th>Hold / Adjust</th>
+              <th>Established</th>
+              <th>Will Delay?</th>
+              <th>Delay</th>
               <th></th>
             </tr>
           </thead>
@@ -165,81 +179,85 @@
           </tbody>
         </table>
       </div>
+
+      <!-- DEPARTURES TABLE (Shown when there are departures) -->
+      <div id="departuresSection" class="departures-sub-section hidden">
+        <h3 class="sub-table-title">🛫 Outbound Departures (Starts at 0 NM • 5 NM/min)</h3>
+        <div class="table-responsive">
+          <table class="checkpoint-table dep-table">
+            <thead>
+              <tr>
+                <th>Aircraft</th>
+                <th>Headed To (WPT)</th>
+                <th>Dep Time (0 NM)</th>
+                <th>10 NM</th>
+                <th>25 NM</th>
+                <th>50 NM</th>
+                <th>60 NM</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="departuresTableBody">
+              <!-- Populated by JS -->
+            </tbody>
+          </table>
+        </div>
+      </div>
     </section>
 
-    <!-- TWO-COLUMN BOTTOM: WHERE ARE THEY NOW + CHRONOLOGICAL RADIO TIMELINE -->
-    <div class="bottom-grid">
-      <!-- LIVE POSITION ESTIMATOR AT TIME T -->
-      <section class="card">
-        <div class="card-header">
-          <h2>🎯 Position Estimator at Time <code>T</code></h2>
-          <span class="badge-subtle">5 NM = 1 min</span>
+    <!-- DEDICATED CONFLICTS & DELAY ANALYSIS SECTION -->
+    <section class="card conflicts-card">
+      <div class="card-header">
+        <div>
+          <h2>🚨 Conflicts &amp; Arrival Delay Analysis</h2>
+          <p class="card-sub">
+            1) Exact <strong>WHERE (NM)</strong> &amp; <strong>WHEN</strong> a departing aircraft meets an arriving aircraft on the same waypoint.<br />
+            2) Whether an arriving aircraft <strong>will be delayed</strong> because another plane is already cleared for ILS and not yet established.
+          </p>
         </div>
-        <p class="card-sub">Enter any minute to see the exact DME distance or procedure leg of every aircraft in the scenario.</p>
-        <div class="lookup-controls">
-          <label for="lookupTimeInput">Check Time:</label>
-          <input type="text" id="lookupTimeInput" value="10" placeholder="e.g. 10 or 10:10" />
-          <button type="button" class="time-step-btn lookup-step" data-step="-1">-1m</button>
-          <button type="button" class="time-step-btn lookup-step" data-step="1">+1m</button>
-          <button type="button" class="time-step-btn lookup-step" data-step="5">+5m</button>
-        </div>
-        <div id="positionSnapshotList" class="snapshot-list">
-          <!-- Populated by JS -->
-        </div>
-      </section>
+      </div>
 
-      <!-- CHRONOLOGICAL RADIO / ACTION TIMELINE -->
-      <section class="card">
-        <div class="card-header">
-          <h2>⏱️ Chronological Action Timeline</h2>
-          <span class="badge-subtle">Ordered by Time</span>
-        </div>
-        <p class="card-sub">Every pilot report, ILS clearance, overhead VOR, 10 DME fix, and TWR handoff in chronological order.</p>
-        <div id="chronologicalFeed" class="timeline-feed">
-          <!-- Populated by JS -->
-        </div>
-      </section>
-    </div>
-
-    <!-- QUICK RULES & FREQUENCIES REFERENCE FOOTER -->
-    <section class="card rules-card">
-      <div class="rules-grid">
-        <div class="rule-box">
-          <h3>📐 Standard Approach (Normal)</h3>
-          <ol>
-            <li><strong>First Report (60 or 50 NM):</strong> Instruct to report <strong>25 NM</strong>. (<code>60→25 = +7m</code>, <code>50→25 = +5m</code>)</li>
-            <li><strong>25 NM:</strong> Instruct to report <strong>10 NM</strong>. (<code>25→10 = +3m</code>)</li>
-            <li><strong>10 NM:</strong> <strong>Clear for ILS</strong>. Flies <code>+2m</code> to <strong>AYT VOR</strong>.</li>
-            <li><strong>AYT VOR:</strong> Flies <code>+2m</code> outbound to <strong>10 DME FIX</strong>.</li>
-            <li><strong>10 DME FIX:</strong> Flies <code>+5m</code> procedure/base turn → <strong>Full Established &amp; Sent to TWR (118.1)</strong>.</li>
-          </ol>
-        </div>
-        <div class="rule-box straight-rule-box">
-          <h3>⚡ Straight-In Exceptions (Airway VA-16)</h3>
-          <ul>
-            <li><strong>RWY 36 Active + South (DERYA / R-170):</strong> Straight-In to RWY 36</li>
-            <li><strong>RWY 18 Active + North (KUMRU / R-350):</strong> Straight-In to RWY 18</li>
-          </ul>
-          <ol>
-            <li><strong>First Report (60 or 50 NM):</strong> Instruct to report <strong>25 NM</strong>. (<code>60→25 = +7m</code>, <code>50→25 = +5m</code>)</li>
-            <li><strong>25 NM:</strong> <strong>Clear for ILS</strong> directly!</li>
-            <li><strong>10 NM (<code>+3m</code> after 25 NM):</strong> <strong>Full Established &amp; Sent to TWR (118.1)</strong> (No VOR overhead or 5-min procedure turn).</li>
-          </ol>
-        </div>
-        <div class="rule-box freq-box">
-          <h3>📻 AYT TMA Frequencies &amp; MSAs</h3>
-          <div class="freq-list">
-            <div><span>AYT TWR:</span> <strong>118.1</strong></div>
-            <div><span>ANK ACC:</span> <strong>131.05</strong></div>
-            <div><span>ERCAN ACC:</span> <strong>126.7</strong></div>
+      <div class="conflicts-grid">
+        <!-- PART 1: DEPARTURE vs ARRIVAL CONFLICTS -->
+        <div class="conflict-panel">
+          <div class="panel-header">
+            <h3>⚔️ Departure ↔ Arrival Head-On Conflicts</h3>
+            <span class="badge-subtle">Same Waypoint</span>
           </div>
-          <div class="msa-list">
-            <div><span>NW (R-270–R-350):</span> <strong>10,000'</strong></div>
-            <div><span>NE (R-350–R-090):</span> <strong>9,000'</strong></div>
-            <div><span>SE (R-090–R-170):</span> <strong>3,000'</strong></div>
-            <div><span>SW (R-170–R-270):</span> <strong>12,000'</strong></div>
+          <div id="depArrConflictList" class="conflict-list">
+            <!-- Populated by JS -->
           </div>
         </div>
+
+        <!-- PART 2: ILS CLEARANCE DELAYS -->
+        <div class="conflict-panel">
+          <div class="panel-header">
+            <h3>⏳ Arrival ILS Clearance Delays</h3>
+            <span class="badge-subtle">Cleared → Established Window</span>
+          </div>
+          <div id="ilsDelayList" class="conflict-list">
+            <!-- Populated by JS -->
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- LIVE POSITION ESTIMATOR AT TIME T -->
+    <section class="card">
+      <div class="card-header">
+        <h2>🎯 Position Estimator at Time <code>T</code></h2>
+        <span class="badge-subtle">5 NM = 1 min</span>
+      </div>
+      <p class="card-sub">Enter any minute to see the exact DME distance or leg of every arrival and departure in the scenario.</p>
+      <div class="lookup-controls">
+        <label for="lookupTimeInput">Check Time:</label>
+        <input type="text" id="lookupTimeInput" value="10" placeholder="e.g. 10 or 10:10" />
+        <button type="button" class="time-step-btn lookup-step" data-step="-1">-1m</button>
+        <button type="button" class="time-step-btn lookup-step" data-step="1">+1m</button>
+        <button type="button" class="time-step-btn lookup-step" data-step="5">+5m</button>
+      </div>
+      <div id="positionSnapshotList" class="snapshot-list">
+        <!-- Populated by JS -->
       </div>
     </section>
   </main>
