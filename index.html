@@ -253,22 +253,33 @@
         </div>
 
         <div class="conflicts-grid" style="margin-top: 1rem;">
-          <!-- PART 1: DEPARTURE vs ARRIVAL CONFLICTS -->
+          <!-- PART 1: HEAD-ON DEPARTURE vs ARRIVAL CONFLICTS (SAME WAYPOINT) -->
           <div class="conflict-panel">
             <div class="panel-header">
-              <h3>⚔️ Departure ↔ Arrival Conflicts</h3>
-              <span class="badge-subtle">Same-Radial &amp; &lt;15 NM VOR</span>
+              <h3>⚔️ Head-On Departure ↔ Arrival</h3>
+              <span class="badge-subtle">Same Waypoint</span>
             </div>
             <div id="depArrConflictList" class="conflict-list">
               <!-- Populated by JS -->
             </div>
           </div>
 
-          <!-- PART 2: VOR <15 NM CONVERGENCE & EAT ANALYSIS -->
+          <!-- PART 2: RADIAL & VOR <15 NM CONFLICTS -->
           <div class="conflict-panel">
             <div class="panel-header">
-              <h3>📐 VOR &lt;15 NM Separation, Stack &amp; EATs</h3>
-              <span class="badge-subtle">Live 0.2m Step Checks &amp; Hold Stack</span>
+              <h3>🧭 Radial &amp; VOR &lt;15 NM Conflicts</h3>
+              <span class="badge-subtle">Cross-Radial &amp; 1,000 ft Minima</span>
+            </div>
+            <div id="radialConflictList" class="conflict-list">
+              <!-- Populated by JS -->
+            </div>
+          </div>
+
+          <!-- PART 3: APPROACH SEQUENCE, HOLD STACK & EAT ANALYSIS -->
+          <div class="conflict-panel">
+            <div class="panel-header">
+              <h3>⏳ Approach Sequence &amp; EAT Delays</h3>
+              <span class="badge-subtle">ILS Window &amp; Hold Stack</span>
             </div>
             <div id="ilsDelayList" class="conflict-list">
               <!-- Populated by JS -->
