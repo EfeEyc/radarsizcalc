@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <title>AYT TMA Radarless Calculator &amp; Master Solver</title>
-  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="styles.css?v=20261021b" />
 </head>
 <body>
   <main class="container">
@@ -37,122 +37,185 @@
     <!-- VIEW 1: CALCULATOR, CHECKPOINT SHEET & MASTER SCENARIO SOLVER         -->
     <!-- ===================================================================== -->
     <div id="viewCalc" class="view-panel">
-      <!-- QUICK CALCULATOR & ADD AIRCRAFT PANEL -->
+      <!-- ONE-BY-ONE NEW PLANE PROMPT WIZARD -->
       <section class="card entry-card">
-        <div class="card-header">
-          <div class="header-with-tabs">
-            <div class="flight-type-tabs" role="group" aria-label="Flight Type">
-              <button type="button" id="tabArrival" class="type-tab active" data-type="ARR">
-                🛬 Arrival
+        <!-- LAUNCHER BAR -->
+        <div id="newPlaneLauncher" class="new-plane-launcher">
+          <button type="button" id="btnOpenNewPlane" class="new-plane-hero-btn">
+            <span class="plus-icon">➕</span>
+            <span>New Plane</span>
+            <small>Step-by-Step Prompt</small>
+          </button>
+          <div class="launcher-meta">
+            <span class="speed-pill">5 NM / 1 min</span>
+            <span class="badge-subtle">Auto Normal / Str-In</span>
+          </div>
+        </div>
+
+        <!-- STEP-BY-STEP WIZARD CONTAINER (Opens when "New Plane" is clicked) -->
+        <div id="newPlaneWizard" class="wizard-container hidden">
+          <div class="wizard-top-bar">
+            <div id="wizardStepPills" class="wizard-step-pills">
+              <!-- Populated dynamically by JS -->
+            </div>
+            <button type="button" id="btnCloseWizard" class="small-btn danger-btn" title="Close prompt">
+              ✕ Cancel
+            </button>
+          </div>
+
+          <!-- STEP 0: ARR OR DEP -->
+          <div id="wizStepType" class="wizard-step-pane">
+            <div class="wizard-prompt-title">Step 1 — Select Traffic Type: Arrival or Departure?</div>
+            <div class="wizard-type-grid">
+              <button type="button" id="wizBtnArr" class="wizard-type-card arr-card">
+                <span class="wiz-type-icon">🛬</span>
+                <span class="wiz-type-name">Arrival (ARR)</span>
+                <span class="wiz-type-flow">Callsign → FL → Dist → Waypoint → Report Time</span>
               </button>
-              <button type="button" id="tabDeparture" class="type-tab" data-type="DEP">
-                🛫 Departure (0 NM)
+              <button type="button" id="wizBtnDep" class="wizard-type-card dep-card">
+                <span class="wiz-type-icon">🛫</span>
+                <span class="wiz-type-name">Departure (DEP)</span>
+                <span class="wiz-type-flow">Callsign → FL → Time (0 NM) → Waypoint</span>
               </button>
             </div>
           </div>
-          <span class="speed-pill">5 NM / 1 min</span>
-        </div>
 
-        <form id="aircraftForm" autocomplete="off">
-          <div class="form-grid">
-            <!-- LEFT COLUMN: 1. Callsign/FL/Type + 2. Waypoint -->
-            <div class="left-fields-stack">
-              <!-- 1. Callsign, Initial/Target FL & Approach Override -->
-              <div class="field-group meta-group">
-                <label class="field-label" for="inputCallsign" id="metaFieldLabel">
-                  1. Callsign, Flight Level &amp; Approach Type
-                </label>
-                <div class="meta-row">
-                  <input
-                    type="text"
-                    id="inputCallsign"
-                    placeholder="Callsign (THY1)"
-                    maxlength="12"
-                  />
-                  <div class="fl-input-wrap" title="Initial FL for Arrival or Target FL for Departure">
-                    <span class="fl-prefix" id="flPrefixLabel">FL</span>
-                    <input
-                      type="number"
-                      id="inputFl"
-                      value="130"
-                      min="30"
-                      max="450"
-                      step="10"
-                      aria-label="Flight Level"
-                    />
-                  </div>
-                  <div class="approach-override" id="approachOverrideGroup" role="group" aria-label="Approach Type">
-                    <button type="button" id="btnModeAuto" class="mode-btn active" data-mode="auto">Auto</button>
-                    <button type="button" id="btnModeNormal" class="mode-btn" data-mode="normal">Normal</button>
-                    <button type="button" id="btnModeStraight" class="mode-btn" data-mode="straight">Str-In</button>
-                  </div>
-                </div>
+          <!-- STEP: CALLSIGN -->
+          <div id="wizStepCallsign" class="wizard-step-pane hidden">
+            <label class="wizard-prompt-title" for="inputCallsign" id="wizCallsignLabel">
+              Enter Aircraft Callsign
+            </label>
+            <div class="wizard-input-row">
+              <input
+                type="text"
+                id="inputCallsign"
+                class="wizard-big-input"
+                placeholder="e.g. JAV5W9 or THY12"
+                maxlength="12"
+                autocomplete="off"
+              />
+            </div>
+            <div class="wizard-nav-row">
+              <button type="button" class="small-btn wiz-back-btn">← Back</button>
+              <button type="button" class="primary-btn wiz-next-btn">Next → (Enter)</button>
+            </div>
+          </div>
+
+          <!-- STEP: FLIGHT LEVEL -->
+          <div id="wizStepFl" class="wizard-step-pane hidden">
+            <label class="wizard-prompt-title" for="inputFl" id="wizFlLabel">
+              Enter Flight Level (FL)
+            </label>
+            <div class="wizard-input-row">
+              <div class="fl-input-wrap wizard-fl-wrap">
+                <span class="fl-prefix">FL</span>
+                <input
+                  type="number"
+                  id="inputFl"
+                  value="250"
+                  min="30"
+                  max="450"
+                  step="10"
+                  aria-label="Flight Level"
+                />
               </div>
-
-              <!-- 2. Waypoint / Entry Fix -->
-              <div class="field-group waypoint-group">
-                <label class="field-label" id="wptFieldLabel">2. Waypoint / Entry Fix (MEA &amp; MSA)</label>
-                <div class="wpt-grid" id="wptGrid">
-                  <!-- Populated by JS -->
-                </div>
+              <div class="quick-time-btns">
+                <button type="button" class="time-step-btn fl-step-btn" data-fl-step="-20">-20</button>
+                <button type="button" class="time-step-btn fl-step-btn" data-fl-step="-10">-10</button>
+                <button type="button" class="time-step-btn fl-step-btn" data-fl-step="10">+10</button>
+                <button type="button" class="time-step-btn fl-step-btn" data-fl-step="20">+20</button>
               </div>
             </div>
+            <div class="wizard-quick-pills">
+              <span class="quick-pill-label">Quick FL:</span>
+              <button type="button" class="small-btn fl-preset-btn" data-fl-val="150">FL150</button>
+              <button type="button" class="small-btn fl-preset-btn" data-fl-val="240">FL240</button>
+              <button type="button" class="small-btn fl-preset-btn" data-fl-val="250">FL250</button>
+              <button type="button" class="small-btn fl-preset-btn" data-fl-val="260">FL260</button>
+              <button type="button" class="small-btn fl-preset-btn" data-fl-val="270">FL270</button>
+              <button type="button" class="small-btn fl-preset-btn" data-fl-val="300">FL300</button>
+            </div>
+            <div class="wizard-nav-row">
+              <button type="button" class="small-btn wiz-back-btn">← Back</button>
+              <button type="button" class="primary-btn wiz-next-btn">Next → (Enter)</button>
+            </div>
+          </div>
 
-            <!-- RIGHT COLUMN: 3. Distance + 4. Time -->
-            <div class="right-fields-stack">
-              <!-- 3. Initial Distance (Hidden when Departure is selected) -->
-              <div class="field-group dist-group" id="distFieldGroup">
-                <label class="field-label" for="inputDist">3. First Report Distance (NM)</label>
-                <div class="time-input-row">
-                  <div class="custom-dist-wrap">
-                    <input type="number" id="inputDist" value="60" min="5" max="150" step="1" aria-label="Distance in NM" />
-                    <span class="unit">NM</span>
-                  </div>
-                  <div class="quick-time-btns">
-                    <button type="button" class="time-step-btn dist-step-btn" data-dist-step="-5">-5</button>
-                    <button type="button" class="time-step-btn dist-step-btn" data-dist-step="-1">-1</button>
-                    <button type="button" class="time-step-btn dist-step-btn" data-dist-step="1">+1</button>
-                    <button type="button" class="time-step-btn dist-step-btn" data-dist-step="5">+5</button>
-                  </div>
-                </div>
+          <!-- STEP: FIRST REPORT DISTANCE (ARRIVAL ONLY) -->
+          <div id="wizStepDist" class="wizard-step-pane hidden">
+            <label class="wizard-prompt-title" for="inputDist">
+              Enter First Report Distance (NM)
+            </label>
+            <div class="wizard-input-row">
+              <div class="custom-dist-wrap wizard-dist-wrap">
+                <input type="number" id="inputDist" value="60" min="5" max="150" step="1" aria-label="Distance in NM" />
+                <span class="unit">NM</span>
               </div>
+              <div class="quick-time-btns">
+                <button type="button" class="time-step-btn dist-step-btn" data-dist-step="-5">-5</button>
+                <button type="button" class="time-step-btn dist-step-btn" data-dist-step="-1">-1</button>
+                <button type="button" class="time-step-btn dist-step-btn" data-dist-step="1">+1</button>
+                <button type="button" class="time-step-btn dist-step-btn" data-dist-step="5">+5</button>
+              </div>
+            </div>
+            <div class="wizard-quick-pills">
+              <span class="quick-pill-label">Quick Dist:</span>
+              <button type="button" class="small-btn dist-preset-btn" data-dist-val="60">60 NM</button>
+              <button type="button" class="small-btn dist-preset-btn" data-dist-val="55">55 NM</button>
+              <button type="button" class="small-btn dist-preset-btn" data-dist-val="50">50 NM</button>
+              <button type="button" class="small-btn dist-preset-btn" data-dist-val="45">45 NM</button>
+            </div>
+            <div class="wizard-nav-row">
+              <button type="button" class="small-btn wiz-back-btn">← Back</button>
+              <button type="button" class="primary-btn wiz-next-btn">Next → (Enter)</button>
+            </div>
+          </div>
 
-              <!-- 4. Time Input -->
-              <div class="field-group time-group">
-                <label class="field-label" for="inputTime" id="timeFieldLabel">
-                  4. Report Time <span class="hint">(e.g. <code>0</code>, <code>05</code>, or <code>10:05</code>)</span>
-                </label>
-                <div class="time-input-row">
-                  <input
-                    type="text"
-                    id="inputTime"
-                    placeholder="00 or 10:00"
-                    value="00"
-                    inputmode="text"
-                    required
-                  />
-                  <div class="quick-time-btns">
-                    <button type="button" class="time-step-btn minute-step-btn" data-step="-5">-5m</button>
-                    <button type="button" class="time-step-btn minute-step-btn" data-step="-1">-1m</button>
-                    <button type="button" class="time-step-btn minute-step-btn" data-step="1">+1m</button>
-                    <button type="button" class="time-step-btn minute-step-btn" data-step="5">+5m</button>
-                  </div>
-                </div>
+          <!-- STEP: WAYPOINT (ARR STEP 4 / DEP STEP 4) -->
+          <div id="wizStepWpt" class="wizard-step-pane hidden">
+            <div class="wizard-prompt-title" id="wizWptLabel">
+              Select Waypoint / Fix (Auto Normal / Straight-In)
+            </div>
+            <div class="wpt-grid" id="wptGrid">
+              <!-- Populated by JS -->
+            </div>
+            <div class="wizard-nav-row">
+              <button type="button" class="small-btn wiz-back-btn">← Back</button>
+              <button type="button" id="wizWptActionBtn" class="primary-btn">Next → (Enter)</button>
+            </div>
+          </div>
+
+          <!-- STEP: TIME (ARR STEP 5 / DEP STEP 3) -->
+          <div id="wizStepTime" class="wizard-step-pane hidden">
+            <label class="wizard-prompt-title" for="inputTime" id="wizTimeLabel">
+              Enter Report Time <span class="hint">(e.g. <code>01</code>, <code>05</code>, or <code>10:05</code>)</span>
+            </label>
+            <div class="wizard-input-row">
+              <input
+                type="text"
+                id="inputTime"
+                placeholder="00 or 10:00"
+                value="00"
+                inputmode="text"
+              />
+              <div class="quick-time-btns">
+                <button type="button" class="time-step-btn minute-step-btn" data-step="-5">-5m</button>
+                <button type="button" class="time-step-btn minute-step-btn" data-step="-1">-1m</button>
+                <button type="button" class="time-step-btn minute-step-btn" data-step="1">+1m</button>
+                <button type="button" class="time-step-btn minute-step-btn" data-step="5">+5m</button>
               </div>
+            </div>
+            <div class="wizard-nav-row">
+              <button type="button" class="small-btn wiz-back-btn">← Back</button>
+              <button type="button" id="wizTimeActionBtn" class="primary-btn">✅ Add Arrival to Scenario (Enter)</button>
             </div>
           </div>
 
           <!-- LIVE INSTANT RESULT BAR -->
           <div class="live-preview" id="livePreview">
-            <!-- Populated dynamically as you type -->
+            <!-- Populated dynamically as you step through -->
           </div>
-
-          <div class="form-actions">
-            <button type="submit" class="primary-btn" id="btnSubmitAircraft">
-              <span>➕ Add Arrival to Scenario (Enter)</span>
-            </button>
-          </div>
-        </form>
+        </div>
       </section>
 
       <!-- SCENARIO CHECKPOINT SHEET -->
@@ -435,6 +498,6 @@
     </div>
   </main>
 
-  <script src="app.js"></script>
+  <script src="app.js?v=20261021b"></script>
 </body>
 </html>

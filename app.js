@@ -112,13 +112,15 @@ const WAYPOINTS = [
 const state = {
   activeView: "calc", // 'calc' | 'chart' | 'timeline'
   activeRwy: "36",
+  wizardOpen: false,
+  wizardStepIdx: 0, // 0 = ARR/DEP, then 1..N
   flightType: "ARR", // 'ARR' | 'DEP'
-  selectedWpt: "BRONZ",
+  selectedWpt: "DERYA",
   selectedDist: 60,
-  selectedFl: 130,
+  selectedFl: 250,
   inputTimeRaw: "00",
   inputCallsign: "",
-  approachMode: "auto", // 'auto' | 'normal' | 'straight'
+  approachMode: "auto",
   lookupTimeRaw: "00",
   aircraftList: [],
   nextId: 1,
@@ -264,9 +266,7 @@ function formatTime(totalMins, hasHour = false) {
   }
 }
 
-function isAircraftStraightIn(wptId, mode, activeRwy) {
-  if (mode === "straight") return true;
-  if (mode === "normal") return false;
+function isAircraftStraightIn(wptId, _mode, activeRwy) {
   if (activeRwy === "36" && wptId === "DERYA") return true;
   if (activeRwy === "18" && wptId === "KUMRU") return true;
   return false;
@@ -682,7 +682,14 @@ function solveScenario(aircraftList, activeRwy) {
       radialDepArrConflicts.push({
         depAcft: depItem.acft,
         arrAcft: innerStackTraffic[0],
-        wpt: wptDep,
+        arrCallsignDisplay: innerStackTraffic.map((a) => a.callsign).join(" & "),
+        wpt: {
+          ...wptDep,
+          name: `${wptDep.name} ↔ ${innerStackTraffic
+            .map((a) => a.wptId)
+            .filter((v, i, self) => self.indexOf(v) === i)
+            .join("/")}`,
+        },
         tCrossNorm: tDepNorm,
         displayTime: `${formatTime(depItem.calc.tDep, depItem.calc.hasHour)}–${formatTime(
           depItem.calc.t15,
@@ -817,15 +824,23 @@ function solveScenario(aircraftList, activeRwy) {
 
       const eatInfo = eatMap.get(arrItem.acft.id);
       const arrEnter15 = arrItem.norm15 !== null ? arrItem.norm15 : arrItem.normInit;
-      const ovStart = Math.max(tDepNorm, arrEnter15);
-      const ovEnd = Math.min(tDepExit15, eatInfo.effectiveEstNorm);
+      // An on-time Straight-In arrival is cleared to 3,000' at 25 NM (norm25), so inside 15 NM it is already
+      // in the inner approach stack (handled by STACK_FLOOR above), NOT in an un-cleared 25-10 NM MSA phase.
+      const arrMsaPhaseEnd = arrItem.calc.straightIn
+        ? eatInfo.willDelay
+          ? Math.min(arrItem.norm10, eatInfo.eatNorm)
+          : arrItem.norm25 ?? arrItem.normInit
+        : arrItem.norm10;
 
-      // Both inside <15 NM of AYT VOR at the same time while arrival is in its 25-10 NM MSA phase
-      if (ovStart < ovEnd - 1e-6 && ovStart < arrItem.norm10 - 1e-6) {
-        const depMsa = Math.max(wptDep.msaFt, innerStackFloorForDep);
+      const ovStart = Math.max(tDepNorm, arrEnter15);
+      const ovEnd = Math.min(tDepExit15, arrMsaPhaseEnd);
+
+      // Both inside <15 NM of AYT VOR at the same time while arrival is in its pre-ILS MSA transition phase
+      if (ovStart < ovEnd - 1e-6 && ovStart < arrMsaPhaseEnd - 1e-6) {
+        const depMsa = wptDep.msaFt;
         const depMea = wptDep.meaFt;
         const arrMsa = arrItem.wpt.msaFt;
-        const releaseTime = Math.min(tDepExit15, arrItem.norm10);
+        const releaseTime = Math.min(tDepExit15, arrMsaPhaseEnd);
         const releaseStr = formatTime(
           denormalizeTime(releaseTime, useHasHour, refHour),
           useHasHour
@@ -895,6 +910,7 @@ function solveScenario(aircraftList, activeRwy) {
           radialDepArrConflicts.push({
             depAcft: depItem.acft,
             arrAcft: arrItem.acft,
+            arrCallsignDisplay: arrItem.acft.callsign,
             wpt: {
               ...wptDep,
               name: `${wptDep.name} ↔ ${arrItem.wpt.name}`,
@@ -2113,8 +2129,18 @@ function getAircraftStateAtTime(item, solverData, queryNormMins) {
 // RENDER FUNCTIONS
 // ============================================================================
 
+function getWizardStepOrder(flightType) {
+  if (flightType === "DEP") {
+    // Departure prompt order: 0. ARR/DEP -> 1. Callsign -> 2. FL -> 3. Time -> 4. WPT
+    return ["TYPE", "CALLSIGN", "FL", "TIME", "WPT"];
+  }
+  // Arrival prompt order: 0. ARR/DEP -> 1. Callsign -> 2. Flight Level -> 3. First Report Dist -> 4. Waypoint -> 5. Report Time
+  return ["TYPE", "CALLSIGN", "FL", "DIST", "WPT", "TIME"];
+}
+
 function renderWaypointGrid() {
   const container = document.getElementById("wptGrid");
+  if (!container) return;
   container.innerHTML = "";
 
   WAYPOINTS.forEach((wpt) => {
@@ -2133,19 +2159,31 @@ function renderWaypointGrid() {
       </div>
       <div class="wpt-meta">
         <span>MEA ${wpt.fl} • MSA ${wpt.msaFt / 1000}k</span>
-        ${isStraightForCurrentRwy ? `<span class="wpt-tag">STR-IN</span>` : `<span>${wpt.radial}</span>`}
+        ${isStraightForCurrentRwy ? `<span class="wpt-tag">AUTO STR-IN</span>` : `<span>${wpt.radial}</span>`}
       </div>
     `;
 
     btn.addEventListener("click", () => {
       state.selectedWpt = wpt.id;
-      const flInput = document.getElementById("inputFl");
-      state.selectedFl =
-        state.flightType === "DEP" ? wpt.defaultDepFl : wpt.defaultArrFl;
-      if (flInput) flInput.value = state.selectedFl;
-
       renderWaypointGrid();
       renderLivePreview();
+
+      // In the one-by-one wizard:
+      // - For ARR, Waypoint is Step 4 of 5 -> clicking a waypoint advances to Step 5 (Report Time)!
+      // - For DEP, Waypoint is Step 4 of 4 (final step) -> clicking a waypoint selects it and focuses the Add button!
+      if (state.wizardOpen) {
+        const steps = getWizardStepOrder(state.flightType);
+        if (steps[state.wizardStepIdx] === "WPT") {
+          if (state.flightType === "ARR") {
+            state.wizardStepIdx++;
+            if (typeof window.syncWizardUI === "function") window.syncWizardUI();
+          } else {
+            if (typeof window.syncWizardUI === "function") window.syncWizardUI(false);
+            const actionBtn = document.getElementById("wizWptActionBtn");
+            if (actionBtn) actionBtn.focus();
+          }
+        }
+      }
     });
 
     container.appendChild(btn);
@@ -2285,10 +2323,10 @@ function refreshCalculatedValuesOnly() {
     if (!tr) return;
 
     const eatInfo = solver.eatMap.get(acft.id);
-    const modeBtn = tr.querySelector("[data-toggle-mode]");
-    if (modeBtn) {
-      modeBtn.className = `badge ${calc.straightIn ? "badge-straight" : "badge-normal"}`;
-      modeBtn.textContent = calc.straightIn ? "STR-IN" : "NORMAL";
+    const modeBadge = tr.querySelector("[data-mode-badge]");
+    if (modeBadge) {
+      modeBadge.className = `badge ${calc.straightIn ? "badge-straight" : "badge-normal"}`;
+      modeBadge.textContent = calc.straightIn ? "STR-IN" : "NORMAL";
     }
 
     const setCell = (col, val) => {
@@ -2396,11 +2434,11 @@ function renderScenarioBoard() {
           />
         </td>
         <td>
-          <button type="button" class="badge ${
+          <span class="badge ${
             calc.straightIn ? "badge-straight" : "badge-normal"
-          }" data-toggle-mode="${acft.id}" title="Click to toggle Straight-In / Normal">
+          }" data-mode-badge="${acft.id}" title="Automatic Approach Mode based on Active Runway">
             ${calc.straightIn ? "STR-IN" : "NORMAL"}
-          </button>
+          </span>
         </td>
         <td>
           <input
@@ -2581,19 +2619,6 @@ function renderScenarioBoard() {
     });
   });
 
-  arrTbody.querySelectorAll("[data-toggle-mode]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const id = Number(btn.getAttribute("data-toggle-mode"));
-      const target = state.aircraftList.find((a) => a.id === id);
-      if (target) {
-        const currentlyStraight = isAircraftStraightIn(target.wptId, target.mode, state.activeRwy);
-        target.mode = currentlyStraight ? "normal" : "straight";
-        saveState();
-        renderScenarioBoard();
-      }
-    });
-  });
-
   renderSolverPanels(solver);
   renderRadarChartView(solver);
   renderTimelineView(solver);
@@ -2744,9 +2769,10 @@ function renderSolverPanels(solver) {
       radialDeps.forEach((c) => {
         const box = document.createElement("div");
         box.className = "conflict-box alert-warn";
+        const arrLabel = c.arrCallsignDisplay || c.arrAcft.callsign;
         box.innerHTML = `
           <div class="conflict-top">
-            <span class="conflict-pair">🛫 ${c.depAcft.callsign} ↔ 🛬 ${c.arrAcft.callsign}</span>
+            <span class="conflict-pair">🛫 ${c.depAcft.callsign} ↔ 🛬 ${arrLabel}</span>
             <span class="badge badge-eat">${c.wpt.name} (${c.zone})</span>
           </div>
           <div class="conflict-metrics">
@@ -3352,55 +3378,269 @@ function initApp() {
 
   const btnRwy36 = document.getElementById("btnRwy36");
   const btnRwy18 = document.getElementById("btnRwy18");
-  const tabArrival = document.getElementById("tabArrival");
-  const tabDeparture = document.getElementById("tabDeparture");
-  const distFieldGroup = document.getElementById("distFieldGroup");
-  const approachOverrideGroup = document.getElementById("approachOverrideGroup");
-  const wptFieldLabel = document.getElementById("wptFieldLabel");
-  const timeFieldLabel = document.getElementById("timeFieldLabel");
-  const metaFieldLabel = document.getElementById("metaFieldLabel");
-  const btnSubmitAircraft = document.getElementById("btnSubmitAircraft");
+
+  // One-by-One "New Plane" Prompt Wizard Elements
+  const newPlaneLauncher = document.getElementById("newPlaneLauncher");
+  const btnOpenNewPlane = document.getElementById("btnOpenNewPlane");
+  const newPlaneWizard = document.getElementById("newPlaneWizard");
+  const btnCloseWizard = document.getElementById("btnCloseWizard");
+  const wizardStepPills = document.getElementById("wizardStepPills");
+
+  const wizStepType = document.getElementById("wizStepType");
+  const wizStepCallsign = document.getElementById("wizStepCallsign");
+  const wizStepFl = document.getElementById("wizStepFl");
+  const wizStepDist = document.getElementById("wizStepDist");
+  const wizStepWpt = document.getElementById("wizStepWpt");
+  const wizStepTime = document.getElementById("wizStepTime");
+
+  const wizBtnArr = document.getElementById("wizBtnArr");
+  const wizBtnDep = document.getElementById("wizBtnDep");
+  const wizCallsignLabel = document.getElementById("wizCallsignLabel");
+  const wizFlLabel = document.getElementById("wizFlLabel");
+  const wizWptLabel = document.getElementById("wizWptLabel");
+  const wizTimeLabel = document.getElementById("wizTimeLabel");
+  const wizWptActionBtn = document.getElementById("wizWptActionBtn");
+  const wizTimeActionBtn = document.getElementById("wizTimeActionBtn");
+
+  const inputCallsign = document.getElementById("inputCallsign");
   const inputFl = document.getElementById("inputFl");
+  const inputDist = document.getElementById("inputDist");
+  const inputTime = document.getElementById("inputTime");
 
-  function syncFormModeUI() {
+  function getStepMetaList() {
     const isDep = state.flightType === "DEP";
-    const wptObj = WAYPOINTS.find((w) => w.id === state.selectedWpt) || WAYPOINTS[0];
-    tabArrival.classList.toggle("active", !isDep);
-    tabDeparture.classList.toggle("active", isDep);
+    const cs = state.inputCallsign.trim().toUpperCase() || "—";
+    if (isDep) {
+      return [
+        { key: "TYPE", title: "Type", val: "🛫 DEP" },
+        { key: "CALLSIGN", title: "1. Callsign", val: cs },
+        { key: "FL", title: "2. FL", val: `FL${state.selectedFl}` },
+        { key: "TIME", title: "3. Time", val: state.inputTimeRaw || "00" },
+        { key: "WPT", title: "4. WPT", val: state.selectedWpt },
+      ];
+    }
+    return [
+      { key: "TYPE", title: "Type", val: "🛬 ARR" },
+      { key: "CALLSIGN", title: "1. Callsign", val: cs },
+      { key: "FL", title: "2. FL", val: `FL${state.selectedFl}` },
+      { key: "DIST", title: "3. Dist", val: `${state.selectedDist} NM` },
+      { key: "WPT", title: "4. Waypoint", val: state.selectedWpt },
+      { key: "TIME", title: "5. Report Time", val: state.inputTimeRaw || "00" },
+    ];
+  }
 
-    distFieldGroup.classList.toggle("hidden", isDep);
-    approachOverrideGroup.classList.toggle("hidden", isDep);
+  function submitWizardAircraft() {
+    const isDep = state.flightType === "DEP";
+    const defaultPrefix = isDep ? "DEP" : "ACFT";
+    const callsign =
+      state.inputCallsign.trim().toUpperCase() || `${defaultPrefix} ${state.nextId}`;
 
-    state.selectedFl = isDep ? wptObj.defaultDepFl : wptObj.defaultArrFl;
-    if (inputFl) inputFl.value = state.selectedFl;
+    state.aircraftList.push({
+      id: state.nextId++,
+      type: state.flightType,
+      callsign,
+      wptId: state.selectedWpt,
+      fl: Number(inputFl.value) || state.selectedFl || 250,
+      dist: isDep ? 0 : Number(inputDist.value) || 60,
+      timeRaw: inputTime.value.trim() || "00",
+      mode: "auto",
+      holdMins: 0,
+    });
 
-    metaFieldLabel.textContent = isDep
-      ? "1. Callsign & Requested FL"
-      : "1. Callsign, Initial FL & Approach Type";
-    wptFieldLabel.textContent = isDep
-      ? "2. Departure Waypoint / Exit Fix"
-      : "2. Waypoint / Entry Fix (MEA & MSA)";
-    timeFieldLabel.innerHTML = isDep
-      ? `3. Departure Time at 0 NM <span class="hint">(e.g. <code>04</code> or <code>10:04</code>)</span>`
-      : `4. Report Time <span class="hint">(e.g. <code>0</code>, <code>05</code>, or <code>10:05</code>)</span>`;
+    // Reset wizard back to closed launcher bar
+    state.inputCallsign = "";
+    inputCallsign.value = "";
+    state.wizardOpen = false;
+    state.wizardStepIdx = 0;
 
-    btnSubmitAircraft.classList.toggle("dep-mode", isDep);
-    btnSubmitAircraft.innerHTML = isDep
-      ? `<span>🛫 Add Departure to Scenario (Enter)</span>`
-      : `<span>➕ Add Arrival to Scenario (Enter)</span>`;
+    saveState();
+    syncWizardUI(false);
+    renderScenarioBoard();
+  }
+
+  function syncWizardUI(autoFocus = true) {
+    newPlaneLauncher.classList.toggle("hidden", state.wizardOpen);
+    newPlaneWizard.classList.toggle("hidden", !state.wizardOpen);
+
+    if (!state.wizardOpen) return;
+
+    const isDep = state.flightType === "DEP";
+    const steps = getWizardStepOrder(state.flightType);
+    if (state.wizardStepIdx < 0) state.wizardStepIdx = 0;
+    if (state.wizardStepIdx >= steps.length) state.wizardStepIdx = steps.length - 1;
+
+    const currentKey = steps[state.wizardStepIdx];
+    const metaList = getStepMetaList();
+
+    // Render step breadcrumb pills
+    wizardStepPills.innerHTML = "";
+    metaList.forEach((m, idx) => {
+      const pill = document.createElement("button");
+      pill.type = "button";
+      const isDone = idx < state.wizardStepIdx;
+      const isActive = idx === state.wizardStepIdx;
+      pill.className = `wiz-pill ${isDone ? "done" : ""} ${isActive ? "active" : ""}`;
+      pill.innerHTML =
+        idx === 0 && state.wizardStepIdx === 0
+          ? `<span>ARR / DEP</span>`
+          : isDone || isActive
+          ? `<span>${m.title}:</span> <strong>${m.val}</strong>`
+          : `<span>${m.title}</span>`;
+      pill.addEventListener("click", () => {
+        state.wizardStepIdx = idx;
+        syncWizardUI(true);
+      });
+      wizardStepPills.appendChild(pill);
+    });
+
+    // Show only the active step pane
+    wizStepType.classList.toggle("hidden", currentKey !== "TYPE");
+    wizStepCallsign.classList.toggle("hidden", currentKey !== "CALLSIGN");
+    wizStepFl.classList.toggle("hidden", currentKey !== "FL");
+    wizStepDist.classList.toggle("hidden", currentKey !== "DIST");
+    wizStepWpt.classList.toggle("hidden", currentKey !== "WPT");
+    wizStepTime.classList.toggle("hidden", currentKey !== "TIME");
+
+    // Dynamic prompt titles & action buttons for ARR vs DEP
+    wizCallsignLabel.textContent = isDep
+      ? "Step 1 of 4 (Departure) — Enter Aircraft Callsign"
+      : "Step 1 of 5 (Arrival) — Enter Aircraft Callsign";
+
+    wizFlLabel.textContent = isDep
+      ? "Step 2 of 4 (Departure) — Enter Requested Flight Level (FL)"
+      : "Step 2 of 5 (Arrival) — Enter Initial Flight Level (FL)";
+
+    wizWptLabel.textContent = isDep
+      ? "Step 4 of 4 (Departure) — Select Departure Waypoint (WPT)"
+      : "Step 4 of 5 (Arrival) — Select Entry Waypoint (Auto Normal / Straight-In)";
+
+    wizTimeLabel.innerHTML = isDep
+      ? `Step 3 of 4 (Departure) — Enter Departure Time at 0 NM <span class="hint">(e.g. <code>02</code> or <code>10:02</code>)</span>`
+      : `Step 5 of 5 (Arrival) — Enter Report Time at ${state.selectedDist} NM <span class="hint">(e.g. <code>01</code>, <code>05</code>, or <code>10:05</code>)</span>`;
+
+    // Waypoint step button: for ARR it goes to Step 5 (Time); for DEP it is the final Submit button!
+    if (isDep) {
+      wizWptActionBtn.classList.add("dep-mode");
+      wizWptActionBtn.innerHTML = `<span>✅ Add Departure to Scenario (Enter)</span>`;
+    } else {
+      wizWptActionBtn.classList.remove("dep-mode");
+      wizWptActionBtn.innerHTML = `<span>Next: Report Time → (Enter)</span>`;
+    }
+
+    // Time step button: forDEP it goes to Step 4 (WPT); for ARR it is the final Submit button!
+    if (isDep) {
+      wizTimeActionBtn.classList.remove("dep-mode");
+      wizTimeActionBtn.innerHTML = `<span>Next: Waypoint → (Enter)</span>`;
+    } else {
+      wizTimeActionBtn.classList.remove("dep-mode");
+      wizTimeActionBtn.innerHTML = `<span>✅ Add Arrival to Scenario (Enter)</span>`;
+    }
 
     renderWaypointGrid();
     renderLivePreview();
+
+    if (autoFocus) {
+      setTimeout(() => {
+        if (currentKey === "CALLSIGN") {
+          inputCallsign.focus();
+          inputCallsign.select();
+        } else if (currentKey === "FL") {
+          inputFl.focus();
+          inputFl.select();
+        } else if (currentKey === "DIST") {
+          inputDist.focus();
+          inputDist.select();
+        } else if (currentKey === "TIME") {
+          inputTime.focus();
+          inputTime.select();
+        }
+      }, 20);
+    }
   }
 
-  tabArrival.addEventListener("click", () => {
-    state.flightType = "ARR";
-    syncFormModeUI();
+  window.syncWizardUI = syncWizardUI;
+
+  function advanceWizardStep() {
+    const steps = getWizardStepOrder(state.flightType);
+    if (state.wizardStepIdx < steps.length - 1) {
+      state.wizardStepIdx++;
+      syncWizardUI(true);
+    } else {
+      submitWizardAircraft();
+    }
+  }
+
+  function prevWizardStep() {
+    if (state.wizardStepIdx > 0) {
+      state.wizardStepIdx--;
+      syncWizardUI(true);
+    } else {
+      state.wizardOpen = false;
+      syncWizardUI(false);
+    }
+  }
+
+  btnOpenNewPlane.addEventListener("click", () => {
+    state.wizardOpen = true;
+    state.wizardStepIdx = 0; // Start at ARR or DEP prompt
+    state.inputCallsign = "";
+    inputCallsign.value = "";
+    state.selectedDist = 60;
+    inputDist.value = 60;
+    syncWizardUI(true);
   });
 
-  tabDeparture.addEventListener("click", () => {
+  btnCloseWizard.addEventListener("click", () => {
+    state.wizardOpen = false;
+    syncWizardUI(false);
+  });
+
+  wizBtnArr.addEventListener("click", () => {
+    state.flightType = "ARR";
+    state.selectedDist = 60;
+    inputDist.value = 60;
+    state.wizardStepIdx = 1; // Advance to Callsign
+    syncWizardUI(true);
+  });
+
+  wizBtnDep.addEventListener("click", () => {
     state.flightType = "DEP";
-    syncFormModeUI();
+    state.wizardStepIdx = 1; // Advance to Callsign
+    syncWizardUI(true);
+  });
+
+  document.querySelectorAll(".wiz-back-btn").forEach((btn) => {
+    btn.addEventListener("click", prevWizardStep);
+  });
+
+  document.querySelectorAll(".wiz-next-btn").forEach((btn) => {
+    btn.addEventListener("click", advanceWizardStep);
+  });
+
+  wizWptActionBtn.addEventListener("click", () => {
+    if (state.flightType === "DEP") {
+      submitWizardAircraft();
+    } else {
+      advanceWizardStep();
+    }
+  });
+
+  wizTimeActionBtn.addEventListener("click", () => {
+    if (state.flightType === "ARR") {
+      submitWizardAircraft();
+    } else {
+      advanceWizardStep();
+    }
+  });
+
+  // Allow pressing Enter inside any wizard input to advance to the next prompt (or submit on final step)
+  [inputCallsign, inputFl, inputDist, inputTime].forEach((inp) => {
+    inp.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        advanceWizardStep();
+      }
+    });
   });
 
   function updateRwyUI() {
@@ -3423,17 +3663,36 @@ function initApp() {
     updateRwyUI();
   });
 
-  // Flight Level Input
+  // Flight Level Input & Step/Preset Buttons
   inputFl.addEventListener("input", () => {
     state.selectedFl = Number(inputFl.value) || 100;
-    renderLivePreview();
+    syncWizardUI(false);
   });
 
-  // Distance Input & Step Buttons (-5, -1, +1, +5)
-  const inputDist = document.getElementById("inputDist");
+  document.querySelectorAll(".fl-step-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const step = Number(btn.getAttribute("data-fl-step"));
+      const cur = Number(inputFl.value) || 250;
+      const nextFl = Math.max(30, Math.min(450, cur + step));
+      inputFl.value = nextFl;
+      state.selectedFl = nextFl;
+      syncWizardUI(false);
+    });
+  });
+
+  document.querySelectorAll(".fl-preset-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const val = Number(btn.getAttribute("data-fl-val"));
+      inputFl.value = val;
+      state.selectedFl = val;
+      advanceWizardStep();
+    });
+  });
+
+  // Distance Input & Step/Preset Buttons (-5, -1, +1, +5)
   inputDist.addEventListener("input", () => {
     state.selectedDist = Number(inputDist.value) || 0;
-    renderLivePreview();
+    syncWizardUI(false);
   });
 
   document.querySelectorAll(".dist-step-btn").forEach((btn) => {
@@ -3443,15 +3702,23 @@ function initApp() {
       const nextDist = Math.max(5, cur + step);
       inputDist.value = nextDist;
       state.selectedDist = nextDist;
-      renderLivePreview();
+      syncWizardUI(false);
+    });
+  });
+
+  document.querySelectorAll(".dist-preset-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const val = Number(btn.getAttribute("data-dist-val"));
+      inputDist.value = val;
+      state.selectedDist = val;
+      advanceWizardStep();
     });
   });
 
   // Time Input & Step Buttons (-5m, -1m, +1m, +5m)
-  const inputTime = document.getElementById("inputTime");
   inputTime.addEventListener("input", () => {
     state.inputTimeRaw = inputTime.value;
-    renderLivePreview();
+    syncWizardUI(false);
   });
 
   document.querySelectorAll(".minute-step-btn").forEach((btn) => {
@@ -3465,54 +3732,14 @@ function initApp() {
         inputTime.value = String(Math.round(nextMins)).padStart(2, "0");
       }
       state.inputTimeRaw = inputTime.value;
-      renderLivePreview();
+      syncWizardUI(false);
     });
   });
 
   // Callsign Input
-  const inputCallsign = document.getElementById("inputCallsign");
   inputCallsign.addEventListener("input", () => {
     state.inputCallsign = inputCallsign.value;
-    renderLivePreview();
-  });
-
-  // Approach Mode Override Buttons
-  const modeBtns = document.querySelectorAll(".mode-btn");
-  modeBtns.forEach((btn) => {
-    btn.addEventListener("click", () => {
-      state.approachMode = btn.getAttribute("data-mode");
-      modeBtns.forEach((b) => b.classList.toggle("active", b === btn));
-      renderLivePreview();
-    });
-  });
-
-  // Add Aircraft Form Submit
-  const aircraftForm = document.getElementById("aircraftForm");
-  aircraftForm.addEventListener("submit", (e) => {
-    e.preventDefault();
-    const isDep = state.flightType === "DEP";
-    const defaultPrefix = isDep ? "DEP" : "ACFT";
-    const callsign =
-      state.inputCallsign.trim().toUpperCase() || `${defaultPrefix} ${state.nextId}`;
-
-    state.aircraftList.push({
-      id: state.nextId++,
-      type: state.flightType,
-      callsign,
-      wptId: state.selectedWpt,
-      fl: Number(inputFl.value) || 130,
-      dist: isDep ? 0 : Number(inputDist.value) || 60,
-      timeRaw: inputTime.value.trim() || "00",
-      mode: state.approachMode,
-      holdMins: 0,
-    });
-
-    state.inputCallsign = "";
-    inputCallsign.value = "";
-
-    saveState();
-    renderLivePreview();
-    renderScenarioBoard();
+    syncWizardUI(false);
   });
 
   // Auto-Sequence by Solver Button
@@ -3630,7 +3857,7 @@ function initApp() {
     });
   }
 
-  syncFormModeUI();
+  syncWizardUI(false);
   updateRwyUI();
 }
 
