@@ -3,420 +3,422 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <title>AYT TMA Radarless Calculator</title>
+  <title>AYT TMA Radarless Calculator &amp; Master Solver</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
   <main class="container">
-    <!-- COMPACT RUNWAY BAR ONLY -->
-    <div class="rwy-bar">
+    <!-- COMPACT TOP CONTROL BAR: RUNWAY SELECTOR + VIEW TABS -->
+    <div class="top-control-strip">
       <div class="rwy-selector" role="group" aria-label="Active Runway">
-        <span class="rwy-label">ACTIVE RWY</span>
+        <span class="rwy-label">RWY</span>
         <button type="button" id="btnRwy36" class="rwy-btn active" data-rwy="36">
-          RWY 36 <small>(DERYA Str-In)</small>
+          36 <small>(DERYA Str-In)</small>
         </button>
         <button type="button" id="btnRwy18" class="rwy-btn" data-rwy="18">
-          RWY 18 <small>(KUMRU Str-In)</small>
+          18 <small>(KUMRU Str-In)</small>
+        </button>
+      </div>
+
+      <div class="main-view-tabs" role="tablist" aria-label="Main Views">
+        <button type="button" class="view-tab active" data-view="calc" role="tab" aria-selected="true">
+          🧮 Calculator &amp; Solver
+        </button>
+        <button type="button" class="view-tab" data-view="chart" role="tab" aria-selected="false">
+          📡 Chart &amp; Blips View
+        </button>
+        <button type="button" class="view-tab" data-view="timeline" role="tab" aria-selected="false">
+          ⏱️ Scenario Time View
         </button>
       </div>
     </div>
 
-    <!-- QUICK CALCULATOR & ADD AIRCRAFT PANEL -->
-    <section class="card entry-card">
-      <div class="card-header">
-        <div class="header-with-tabs">
-          <div class="flight-type-tabs" role="group" aria-label="Flight Type">
-            <button type="button" id="tabArrival" class="type-tab active" data-type="ARR">
-              🛬 Arrival
+    <!-- ===================================================================== -->
+    <!-- VIEW 1: CALCULATOR, CHECKPOINT SHEET & MASTER SCENARIO SOLVER         -->
+    <!-- ===================================================================== -->
+    <div id="viewCalc" class="view-panel">
+      <!-- QUICK CALCULATOR & ADD AIRCRAFT PANEL -->
+      <section class="card entry-card">
+        <div class="card-header">
+          <div class="header-with-tabs">
+            <div class="flight-type-tabs" role="group" aria-label="Flight Type">
+              <button type="button" id="tabArrival" class="type-tab active" data-type="ARR">
+                🛬 Arrival
+              </button>
+              <button type="button" id="tabDeparture" class="type-tab" data-type="DEP">
+                🛫 Departure (0 NM)
+              </button>
+            </div>
+          </div>
+          <span class="speed-pill">5 NM / 1 min</span>
+        </div>
+
+        <form id="aircraftForm" autocomplete="off">
+          <div class="form-grid">
+            <!-- LEFT COLUMN: 1. Callsign/FL/Type + 2. Waypoint -->
+            <div class="left-fields-stack">
+              <!-- 1. Callsign, Initial/Target FL & Approach Override -->
+              <div class="field-group meta-group">
+                <label class="field-label" for="inputCallsign" id="metaFieldLabel">
+                  1. Callsign, Flight Level &amp; Approach Type
+                </label>
+                <div class="meta-row">
+                  <input
+                    type="text"
+                    id="inputCallsign"
+                    placeholder="Callsign (THY1)"
+                    maxlength="12"
+                  />
+                  <div class="fl-input-wrap" title="Initial FL for Arrival or Target FL for Departure">
+                    <span class="fl-prefix" id="flPrefixLabel">FL</span>
+                    <input
+                      type="number"
+                      id="inputFl"
+                      value="130"
+                      min="30"
+                      max="450"
+                      step="10"
+                      aria-label="Flight Level"
+                    />
+                  </div>
+                  <div class="approach-override" id="approachOverrideGroup" role="group" aria-label="Approach Type">
+                    <button type="button" id="btnModeAuto" class="mode-btn active" data-mode="auto">Auto</button>
+                    <button type="button" id="btnModeNormal" class="mode-btn" data-mode="normal">Normal</button>
+                    <button type="button" id="btnModeStraight" class="mode-btn" data-mode="straight">Str-In</button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 2. Waypoint / Entry Fix -->
+              <div class="field-group waypoint-group">
+                <label class="field-label" id="wptFieldLabel">2. Waypoint / Entry Fix (MEA &amp; MSA)</label>
+                <div class="wpt-grid" id="wptGrid">
+                  <!-- Populated by JS -->
+                </div>
+              </div>
+            </div>
+
+            <!-- RIGHT COLUMN: 3. Distance + 4. Time -->
+            <div class="right-fields-stack">
+              <!-- 3. Initial Distance (Hidden when Departure is selected) -->
+              <div class="field-group dist-group" id="distFieldGroup">
+                <label class="field-label" for="inputDist">3. First Report Distance (NM)</label>
+                <div class="time-input-row">
+                  <div class="custom-dist-wrap">
+                    <input type="number" id="inputDist" value="60" min="5" max="150" step="1" aria-label="Distance in NM" />
+                    <span class="unit">NM</span>
+                  </div>
+                  <div class="quick-time-btns">
+                    <button type="button" class="time-step-btn dist-step-btn" data-dist-step="-5">-5</button>
+                    <button type="button" class="time-step-btn dist-step-btn" data-dist-step="-1">-1</button>
+                    <button type="button" class="time-step-btn dist-step-btn" data-dist-step="1">+1</button>
+                    <button type="button" class="time-step-btn dist-step-btn" data-dist-step="5">+5</button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 4. Time Input -->
+              <div class="field-group time-group">
+                <label class="field-label" for="inputTime" id="timeFieldLabel">
+                  4. Report Time <span class="hint">(e.g. <code>0</code>, <code>05</code>, or <code>10:05</code>)</span>
+                </label>
+                <div class="time-input-row">
+                  <input
+                    type="text"
+                    id="inputTime"
+                    placeholder="00 or 10:00"
+                    value="00"
+                    inputmode="text"
+                    required
+                  />
+                  <div class="quick-time-btns">
+                    <button type="button" class="time-step-btn minute-step-btn" data-step="-5">-5m</button>
+                    <button type="button" class="time-step-btn minute-step-btn" data-step="-1">-1m</button>
+                    <button type="button" class="time-step-btn minute-step-btn" data-step="1">+1m</button>
+                    <button type="button" class="time-step-btn minute-step-btn" data-step="5">+5m</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- LIVE INSTANT RESULT BAR -->
+          <div class="live-preview" id="livePreview">
+            <!-- Populated dynamically as you type -->
+          </div>
+
+          <div class="form-actions">
+            <button type="submit" class="primary-btn" id="btnSubmitAircraft">
+              <span>➕ Add Arrival to Scenario (Enter)</span>
             </button>
-            <button type="button" id="tabDeparture" class="type-tab" data-type="DEP">
-              🛫 Departure (0 NM)
+          </div>
+        </form>
+      </section>
+
+      <!-- SCENARIO CHECKPOINT SHEET -->
+      <section class="card scenario-card">
+        <div class="card-header scenario-header">
+          <div>
+            <h2>📋 Scenario Checkpoint Sheet &amp; EAT Calculator</h2>
+            <p class="card-sub" id="scenarioSummaryText">All traffic fields are directly editable below.</p>
+          </div>
+          <div class="scenario-actions">
+            <button type="button" id="btnApplySolverOrder" class="small-btn accent-btn" title="Auto-apply optimal sequence & EAT delays">
+              🧠 Auto-Sequence by Solver
+            </button>
+            <button type="button" id="btnSortByEst" class="small-btn" title="Sort by Established time">
+              Sort by Est ⇅
+            </button>
+            <button type="button" id="btnSortByInit" class="small-btn" title="Sort by Initial Report time">
+              Sort by Start ⇅
+            </button>
+            <button type="button" id="btnClearAll" class="small-btn danger-btn">
+              🗑️ Clear
             </button>
           </div>
         </div>
-        <span class="speed-pill">5 NM / 1 min</span>
-      </div>
 
-      <form id="aircraftForm" autocomplete="off">
-        <div class="form-grid">
-          <!-- LEFT COLUMN: 1. Callsign + 2. Waypoint -->
-          <div class="left-fields-stack">
-            <!-- 1. Callsign & Approach Override -->
-            <div class="field-group meta-group">
-              <label class="field-label" for="inputCallsign" id="metaFieldLabel">1. Callsign &amp; Approach Type</label>
-              <div class="meta-row">
-                <input
-                  type="text"
-                  id="inputCallsign"
-                  placeholder="e.g. THY123"
-                  maxlength="12"
-                />
-                <div class="approach-override" id="approachOverrideGroup" role="group" aria-label="Approach Type">
-                  <button type="button" id="btnModeAuto" class="mode-btn active" data-mode="auto">Auto Rule</button>
-                  <button type="button" id="btnModeNormal" class="mode-btn" data-mode="normal">Normal</button>
-                  <button type="button" id="btnModeStraight" class="mode-btn" data-mode="straight">Straight-In</button>
-                </div>
-              </div>
-            </div>
-
-            <!-- 2. Waypoint / Entry Fix -->
-            <div class="field-group waypoint-group">
-              <label class="field-label" id="wptFieldLabel">2. Waypoint / Entry Fix</label>
-              <div class="wpt-grid" id="wptGrid">
-                <!-- Populated by JS -->
-              </div>
-            </div>
-          </div>
-
-          <!-- RIGHT COLUMN: 3. Distance + 4. Time -->
-          <div class="right-fields-stack">
-            <!-- 3. Initial Distance (Hidden when Departure is selected) -->
-            <div class="field-group dist-group" id="distFieldGroup">
-              <label class="field-label" for="inputDist">3. First Report Distance (NM)</label>
-              <div class="time-input-row">
-                <div class="custom-dist-wrap">
-                  <input type="number" id="inputDist" value="60" min="5" max="150" step="1" aria-label="Distance in NM" />
-                  <span class="unit">NM</span>
-                </div>
-                <div class="quick-time-btns">
-                  <button type="button" class="time-step-btn dist-step-btn" data-dist-step="-5">-5</button>
-                  <button type="button" class="time-step-btn dist-step-btn" data-dist-step="-1">-1</button>
-                  <button type="button" class="time-step-btn dist-step-btn" data-dist-step="1">+1</button>
-                  <button type="button" class="time-step-btn dist-step-btn" data-dist-step="5">+5</button>
-                </div>
-              </div>
-            </div>
-
-            <!-- 4. Time Input -->
-            <div class="field-group time-group">
-              <label class="field-label" for="inputTime" id="timeFieldLabel">
-                4. Report Time <span class="hint">(e.g. <code>0</code>, <code>05</code>, or <code>10:05</code>)</span>
-              </label>
-              <div class="time-input-row">
-                <input
-                  type="text"
-                  id="inputTime"
-                  placeholder="00 or 10:00"
-                  value="00"
-                  inputmode="text"
-                  required
-                />
-                <div class="quick-time-btns">
-                  <button type="button" class="time-step-btn minute-step-btn" data-step="-5">-5m</button>
-                  <button type="button" class="time-step-btn minute-step-btn" data-step="-1">-1m</button>
-                  <button type="button" class="time-step-btn minute-step-btn" data-step="1">+1m</button>
-                  <button type="button" class="time-step-btn minute-step-btn" data-step="5">+5m</button>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- LIVE INSTANT RESULT BAR -->
-        <div class="live-preview" id="livePreview">
-          <!-- Populated dynamically as you type -->
-        </div>
-
-        <div class="form-actions">
-          <button type="submit" class="primary-btn" id="btnSubmitAircraft">
-            <span>➕ Add Arrival to Scenario Sheet (Enter)</span>
-          </button>
-        </div>
-      </form>
-    </section>
-
-    <!-- SCENARIO CHECKPOINT SHEET -->
-    <section class="card scenario-card">
-      <div class="card-header scenario-header">
-        <div>
-          <h2>📋 Scenario Checkpoint Sheet</h2>
-          <p class="card-sub" id="scenarioSummaryText">All traffic fields are directly editable below.</p>
-        </div>
-        <div class="scenario-actions">
-          <button type="button" id="btnSortByEst" class="small-btn" title="Sort by Established time">
-            Sort by Established ⇅
-          </button>
-          <button type="button" id="btnSortByInit" class="small-btn" title="Sort by Initial Report time">
-            Sort by Start Time ⇅
-          </button>
-          <button type="button" id="btnClearAll" class="small-btn danger-btn">
-            🗑️ Clear Scenario
-          </button>
-        </div>
-      </div>
-
-      <!-- ARRIVALS TABLE -->
-      <div class="table-responsive">
-        <table class="checkpoint-table" id="scenarioTable">
-          <thead>
-            <tr>
-              <th>Aircraft</th>
-              <th>WPT</th>
-              <th>Approach</th>
-              <th>Dist (NM)</th>
-              <th>Initial</th>
-              <th>25 NM</th>
-              <th>10 NM</th>
-              <th>AYT VOR</th>
-              <th>10 DME FIX</th>
-              <th>Established</th>
-              <th>Will Delay?</th>
-              <th>Delay</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody id="scenarioTableBody">
-            <!-- Populated by JS -->
-          </tbody>
-        </table>
-      </div>
-
-      <!-- DEPARTURES TABLE (Shown when there are departures) -->
-      <div id="departuresSection" class="departures-sub-section hidden">
-        <h3 class="sub-table-title">🛫 Outbound Departures (Starts at 0 NM • 5 NM/min)</h3>
+        <!-- ARRIVALS TABLE -->
         <div class="table-responsive">
-          <table class="checkpoint-table dep-table">
+          <table class="checkpoint-table" id="scenarioTable">
             <thead>
               <tr>
                 <th>Aircraft</th>
-                <th>Headed To (WPT)</th>
-                <th>Dep Time (0 NM)</th>
-                <th>10 NM</th>
+                <th>WPT</th>
+                <th>FL</th>
+                <th>Approach</th>
+                <th>Dist</th>
+                <th>Initial</th>
                 <th>25 NM</th>
-                <th>50 NM</th>
-                <th>60 NM</th>
+                <th>15 NM</th>
+                <th>10 NM</th>
+                <th>AYT VOR</th>
+                <th>10 DME FIX</th>
+                <th>EAT</th>
+                <th>Established</th>
+                <th>Status</th>
+                <th>Delay</th>
                 <th></th>
               </tr>
             </thead>
-            <tbody id="departuresTableBody">
+            <tbody id="scenarioTableBody">
               <!-- Populated by JS -->
             </tbody>
           </table>
         </div>
-      </div>
-    </section>
 
-    <!-- DEDICATED CONFLICTS & DELAY ANALYSIS SECTION -->
-    <section class="card conflicts-card">
-      <div class="card-header">
-        <div>
-          <h2>🚨 Conflicts &amp; Arrival Delay Analysis</h2>
-          <p class="card-sub">
-            1) Exact <strong>WHERE (NM)</strong> &amp; <strong>WHEN</strong> a departing aircraft meets an arriving aircraft on the same waypoint.<br />
-            2) Whether an arriving aircraft <strong>will be delayed</strong> because another plane is already cleared for ILS and not yet established.
-          </p>
-        </div>
-      </div>
-
-      <div class="conflicts-grid">
-        <!-- PART 1: DEPARTURE vs ARRIVAL CONFLICTS -->
-        <div class="conflict-panel">
-          <div class="panel-header">
-            <h3>⚔️ Departure ↔ Arrival Head-On Conflicts</h3>
-            <span class="badge-subtle">Same Waypoint</span>
-          </div>
-          <div id="depArrConflictList" class="conflict-list">
-            <!-- Populated by JS -->
-          </div>
-        </div>
-
-        <!-- PART 2: ILS CLEARANCE DELAYS -->
-        <div class="conflict-panel">
-          <div class="panel-header">
-            <h3>⏳ Arrival ILS Clearance Delays</h3>
-            <span class="badge-subtle">Cleared → Established Window</span>
-          </div>
-          <div id="ilsDelayList" class="conflict-list">
-            <!-- Populated by JS -->
+        <!-- DEPARTURES TABLE -->
+        <div id="departuresSection" class="departures-sub-section hidden">
+          <h3 class="sub-table-title">🛫 Outbound Departures (Starts at 0 NM • 5 NM/min • MSA &lt;10 NM, MEA &lt;25 NM)</h3>
+          <div class="table-responsive">
+            <table class="checkpoint-table dep-table">
+              <thead>
+                <tr>
+                  <th>Aircraft</th>
+                  <th>Headed To (WPT)</th>
+                  <th>Req FL</th>
+                  <th>Dep (0 NM)</th>
+                  <th>10 NM (≥MSA)</th>
+                  <th>25 NM (≥MEA)</th>
+                  <th>50 NM</th>
+                  <th>60 NM</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="departuresTableBody">
+                <!-- Populated by JS -->
+              </tbody>
+            </table>
           </div>
         </div>
-      </div>
-    </section>
+      </section>
 
-    <!-- SITE-NATIVE INTERACTIVE AYT TMA VECTOR CHART -->
-    <section class="card native-chart-card" id="nativeChartSection">
-      <div class="card-header">
-        <div>
-          <h2>🗺️ AYT TMA Airway &amp; Waypoint Chart</h2>
-          <p class="card-sub">Click any waypoint corridor on the chart to select it in the calculator.</p>
+      <!-- MASTER SCENARIO SOLVER & SEPARATION ENGINE -->
+      <section class="card solver-card">
+        <div class="card-header">
+          <div>
+            <h2>🧠 Master Scenario Solver (Altitudes, EATs &amp; Separation)</h2>
+            <p class="card-sub">
+              Solves altitude descents/climbs (MEA → MSA @ 25 NM → 3,000' @ ILS), <strong>1,000 ft VOR separation before 15 NM</strong>, opposite-direction Departure ↔ Arrival locks, and <strong>Expected Approach Times (EAT)</strong>.
+            </p>
+          </div>
         </div>
-        <div class="freq-badges">
-          <span class="freq-pill">ANK ACC: <strong>131.05</strong></span>
-          <span class="freq-pill">ERCAN ACC: <strong>126.7</strong></span>
-          <span class="freq-pill twr-pill">AYT TWR: <strong>118.1</strong></span>
+
+        <!-- SOLVED CLEARANCE CARDS PER AIRCRAFT -->
+        <div id="solverAircraftPlans" class="solver-plans-grid">
+          <!-- Populated by JS -->
         </div>
-      </div>
 
-      <div class="svg-chart-container">
-        <svg viewBox="0 0 860 800" class="ayt-svg-chart" aria-label="AYT TMA Native Chart">
-          <defs>
-            <marker id="arrowRed" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-              <path d="M 0 1.5 L 10 5 L 0 8.5 z" fill="#f87171" />
-            </marker>
-            <marker id="arrowCyan" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
-              <path d="M 0 1.5 L 10 5 L 0 8.5 z" fill="#38bdf8" />
-            </marker>
-          </defs>
+        <div class="conflicts-grid" style="margin-top: 1rem;">
+          <!-- PART 1: DEPARTURE vs ARRIVAL CONFLICTS -->
+          <div class="conflict-panel">
+            <div class="panel-header">
+              <h3>⚔️ Departure ↔ Arrival Radial Conflicts</h3>
+              <span class="badge-subtle">Same Waypoint</span>
+            </div>
+            <div id="depArrConflictList" class="conflict-list">
+              <!-- Populated by JS -->
+            </div>
+          </div>
 
-          <!-- Background Grid Rings (25 NM & TMA 50/60 NM Boundary) -->
-          <circle cx="430" cy="400" r="105" class="dme-ring-inner" />
-          <circle cx="430" cy="400" r="210" class="tma-boundary-circle" />
+          <!-- PART 2: VOR <15 NM CONVERGENCE & EAT ANALYSIS -->
+          <div class="conflict-panel">
+            <div class="panel-header">
+              <h3>📐 VOR &lt;15 NM Separation &amp; EAT Delays</h3>
+              <span class="badge-subtle">1,000 ft Minima &amp; ILS Window</span>
+            </div>
+            <div id="ilsDelayList" class="conflict-list">
+              <!-- Populated by JS -->
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
 
-          <!-- MSA Boxes inside TMA -->
-          <g class="msa-group">
-            <rect x="295" y="248" width="78" height="40" rx="4" class="msa-box" />
-            <text x="334" y="265" class="msa-title">MSA</text>
-            <text x="334" y="281" class="msa-val">10,000'</text>
+    <!-- ===================================================================== -->
+    <!-- VIEW 2: INTERACTIVE CHART & LIVE RADAR BLIPS VIEW                     -->
+    <!-- ===================================================================== -->
+    <div id="viewChart" class="view-panel hidden">
+      <section class="card native-chart-card">
+        <div class="card-header">
+          <div>
+            <h2>📡 AYT TMA Live Situation &amp; Blip Visualizer</h2>
+            <p class="card-sub">Scrub time or press Play to watch all Arrivals and Departures move across AYT TMA with live solved altitudes and DMEs.</p>
+          </div>
+          <div class="freq-badges">
+            <span class="freq-pill">ANK ACC: <strong>131.05</strong></span>
+            <span class="freq-pill">ERCAN ACC: <strong>126.7</strong></span>
+            <span class="freq-pill twr-pill">AYT TWR: <strong>118.1</strong></span>
+          </div>
+        </div>
 
-            <rect x="498" y="275" width="78" height="40" rx="4" class="msa-box" />
-            <text x="537" y="292" class="msa-title">MSA</text>
-            <text x="537" y="308" class="msa-val">9,000'</text>
+        <!-- TIME SCRUBBER BAR FOR CHART -->
+        <div class="radar-time-bar">
+          <div class="radar-time-left">
+            <label for="lookupTimeInput">Scenario Time:</label>
+            <input type="text" id="lookupTimeInput" value="00" placeholder="00 or 10:00" />
+            <button type="button" class="time-step-btn lookup-step" data-step="-5">-5m</button>
+            <button type="button" class="time-step-btn lookup-step" data-step="-1">-1m</button>
+            <button type="button" class="time-step-btn lookup-step" data-step="1">+1m</button>
+            <button type="button" class="time-step-btn lookup-step" data-step="5">+5m</button>
+            <button type="button" id="btnPlayRadar" class="time-step-btn play-btn">▶ Play</button>
+          </div>
+          <div class="radar-slider-wrap">
+            <input type="range" id="radarTimeSlider" min="0" max="40" step="0.2" value="0" aria-label="Scenario Time Slider" />
+          </div>
+        </div>
 
-            <rect x="475" y="478" width="78" height="40" rx="4" class="msa-box" />
-            <text x="514" y="495" class="msa-title">MSA</text>
-            <text x="514" y="511" class="msa-val">3,000'</text>
+        <div class="chart-and-sidebar">
+          <div class="svg-chart-container">
+            <svg viewBox="0 0 860 860" class="ayt-svg-chart" id="aytRadarSvg" aria-label="AYT TMA Live Radar Chart">
+              <defs>
+                <marker id="arrowRed" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                  <path d="M 0 1.5 L 10 5 L 0 8.5 z" fill="#f87171" />
+                </marker>
+                <marker id="arrowCyan" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+                  <path d="M 0 1.5 L 10 5 L 0 8.5 z" fill="#38bdf8" />
+                </marker>
+              </defs>
 
-            <rect x="280" y="445" width="78" height="40" rx="4" class="msa-box" />
-            <text x="319" y="462" class="msa-title">MSA</text>
-            <text x="319" y="478" class="msa-val">12,000'</text>
-          </g>
+              <!-- Distance Rings: 10 NM (r=42), 15 NM (r=63), 25 NM (r=105), 50 NM TMA (r=210), 60 NM (r=252) -->
+              <circle cx="430" cy="430" r="252" class="dme-ring-outer" />
+              <circle cx="430" cy="430" r="210" class="tma-boundary-circle" />
+              <circle cx="430" cy="430" r="105" class="dme-ring-25" />
+              <circle cx="430" cy="430" r="63" class="dme-ring-15" />
+              <circle cx="430" cy="430" r="42" class="dme-ring-10" />
 
-          <!-- 1. NORTH: KUMRU / KFK (VA-16, R-350, FL120) -->
-          <g class="chart-corridor" data-wpt="KUMRU">
-            <line x1="369" y1="55" x2="352" y2="195" class="corridor-wall" />
-            <line x1="415" y1="47" x2="438" y2="190" class="corridor-wall" />
-            <line x1="392" y1="52" x2="409" y2="193" class="airway-dashed" />
-            <line x1="409" y1="193" x2="428" y2="382" class="inbound-track" marker-end="url(#arrowRed)" />
-            <polygon points="392,42 385,55 399,55" class="wpt-triangle-outer" />
-            <text x="392" y="34" class="chart-wpt-outer">KFK</text>
-            <text x="398" y="118" class="chart-spec">FL120 • VA-16</text>
-            <text x="399" y="135" class="chart-radial">R-350</text>
-            <polygon points="409,185 402,198 416,198" class="wpt-triangle" />
-            <text x="366" y="212" class="chart-wpt-main">KUMRU</text>
-          </g>
+              <!-- Ring Labels -->
+              <text x="436" y="184" class="ring-label">60 NM</text>
+              <text x="436" y="226" class="ring-label">50 NM (TMA)</text>
+              <text x="436" y="330" class="ring-label">25 NM (MSA)</text>
+              <text x="436" y="372" class="ring-label">15 NM (VOR Sep)</text>
 
-          <!-- 2. NORTHEAST: DAMLA / HİSAR (W-77, R-030, FL130) -->
-          <g class="chart-corridor" data-wpt="DAMLA">
-            <line x1="535" y1="185" x2="625" y2="35" class="corridor-wall" />
-            <line x1="572" y1="242" x2="668" y2="62" class="corridor-wall" />
-            <line x1="635" y1="58" x2="535" y2="218" class="airway-dashed" />
-            <line x1="535" y1="218" x2="440" y2="384" class="inbound-track" marker-end="url(#arrowRed)" />
-            <polygon points="635,50 628,63 642,63" class="wpt-triangle-outer" />
-            <text x="645" y="42" class="chart-wpt-outer">HİSAR</text>
-            <text x="595" y="140" class="chart-spec">W-77 • FL130</text>
-            <text x="580" y="157" class="chart-radial">R-030</text>
-            <polygon points="535,210 528,223 542,223" class="wpt-triangle" />
-            <text x="578" y="230" class="chart-wpt-main">DAMLA</text>
-          </g>
+              <!-- MSA Boxes inside TMA -->
+              <g class="msa-group">
+                <rect x="295" y="275" width="76" height="38" rx="4" class="msa-box" />
+                <text x="333" y="291" class="msa-title">MSA (NW)</text>
+                <text x="333" y="306" class="msa-val">10,000'</text>
 
-          <!-- 3. EAST: KONAK / MUT (R-55, R-090, FL130) -->
-          <g class="chart-corridor" data-wpt="KONAK">
-            <line x1="638" y1="376" x2="815" y2="376" class="corridor-wall" />
-            <line x1="638" y1="424" x2="815" y2="424" class="corridor-wall" />
-            <line x1="795" y1="400" x2="640" y2="400" class="airway-dashed" />
-            <line x1="640" y1="400" x2="450" y2="400" class="inbound-track" marker-end="url(#arrowRed)" />
-            <polygon points="795,392 788,405 802,405" class="wpt-triangle-outer" />
-            <text x="795" y="384" class="chart-wpt-outer">MUT</text>
-            <text x="718" y="368" class="chart-spec">R-090 • FL130 • R-55</text>
-            <polygon points="640,392 633,405 647,405" class="wpt-triangle" />
-            <text x="640" y="440" class="chart-wpt-main">KONAK</text>
-            <circle cx="525" cy="400" r="4" fill="#38bdf8" />
-            <text x="530" y="388" class="chart-fix-label">KNK FIX</text>
-            <rect x="525" y="400" width="52" height="22" rx="11" class="hold-racetrack" />
-          </g>
+                <rect x="502" y="295" width="76" height="38" rx="4" class="msa-box" />
+                <text x="540" y="311" class="msa-title">MSA (NE)</text>
+                <text x="540" y="326" class="msa-val">9,000'</text>
 
-          <!-- 4. SOUTHEAST: MANAV / DOREN (W-83, R-130, FL070) -->
-          <g class="chart-corridor" data-wpt="MANAV">
-            <line x1="608" y1="510" x2="775" y2="645" class="corridor-wall" />
-            <line x1="572" y1="548" x2="740" y2="682" class="corridor-wall" />
-            <line x1="742" y1="652" x2="591" y2="535" class="airway-dashed" />
-            <line x1="591" y1="535" x2="445" y2="412" class="inbound-track" marker-end="url(#arrowRed)" />
-            <polygon points="742,644 735,657 749,657" class="wpt-triangle-outer" />
-            <text x="765" y="642" class="chart-wpt-outer">DOREN</text>
-            <text x="678" y="575" class="chart-spec">R-130 • FL070 • W-83</text>
-            <polygon points="591,527 584,540 598,540" class="wpt-triangle" />
-            <text x="580" y="562" class="chart-wpt-main">MANAV</text>
-          </g>
+                <rect x="480" y="505" width="76" height="38" rx="4" class="msa-box" />
+                <text x="518" y="521" class="msa-title">MSA (SE)</text>
+                <text x="518" y="536" class="msa-val">3,000'</text>
 
-          <!-- 5. SOUTH: DERYA / TOMBİ (VA-16, R-170, FL070) -->
-          <g class="chart-corridor" data-wpt="DERYA">
-            <line x1="428" y1="610" x2="452" y2="765" class="corridor-wall" />
-            <line x1="482" y1="605" x2="506" y2="760" class="corridor-wall" />
-            <line x1="478" y1="748" x2="454" y2="608" class="airway-dashed" />
-            <line x1="454" y1="608" x2="433" y2="420" class="inbound-track" marker-end="url(#arrowRed)" />
-            <polygon points="478,740 471,753 485,753" class="wpt-triangle-outer" />
-            <text x="478" y="772" class="chart-wpt-outer">TOMBİ</text>
-            <text x="466" y="675" class="chart-spec">R-170 • FL070 • VA-16</text>
-            <polygon points="454,600 447,613 461,613" class="wpt-triangle" />
-            <text x="498" y="602" class="chart-wpt-main">DERYA</text>
-            <polygon points="442,492 436,503 448,503" class="wpt-triangle-fix" />
-            <text x="485" y="492" class="chart-fix-label">10 DME FIX</text>
-            <rect x="442" y="496" width="24" height="54" rx="12" class="hold-racetrack-red" />
-            <text x="424" y="528" class="chart-hold-min">1 dk</text>
-            <text x="482" y="528" class="chart-hold-min">1 dk</text>
-          </g>
+                <rect x="285" y="485" width="76" height="38" rx="4" class="msa-box" />
+                <text x="323" y="501" class="msa-title">MSA (W/SW)</text>
+                <text x="323" y="516" class="msa-val">12,000'</text>
+              </g>
 
-          <!-- 6. WEST: ALPAY / W-79 (W-79, R-270, FL120) -->
-          <g class="chart-corridor" data-wpt="ALPAY">
-            <line x1="45" y1="376" x2="222" y2="376" class="corridor-wall" />
-            <line x1="45" y1="424" x2="222" y2="424" class="corridor-wall" />
-            <line x1="65" y1="400" x2="220" y2="400" class="airway-dashed" />
-            <line x1="220" y1="400" x2="410" y2="400" class="inbound-track" marker-end="url(#arrowRed)" />
-            <polygon points="65,392 58,405 72,405" class="wpt-triangle-outer" />
-            <text x="65" y="384" class="chart-wpt-outer">W-79</text>
-            <text x="138" y="368" class="chart-spec">FL120 • R-270 • W-79</text>
-            <polygon points="220,392 213,405 227,405" class="wpt-triangle" />
-            <text x="220" y="440" class="chart-wpt-main">ALPAY</text>
-          </g>
+              <!-- Static Airway Corridors Group (Populated/Rendered with exact radial math by JS) -->
+              <g id="svgCorridorsLayer"></g>
 
-          <!-- 7. NORTHWEST: BRONZ / CRD (R-55, R-310, FL110) -->
-          <g class="chart-corridor" data-wpt="BRONZ">
-            <line x1="92" y1="152" x2="248" y2="255" class="corridor-wall" />
-            <line x1="65" y1="192" x2="222" y2="295" class="corridor-wall" />
-            <line x1="102" y1="184" x2="258" y2="288" class="airway-dashed" />
-            <line x1="258" y1="288" x2="414" y2="390" class="inbound-track" marker-end="url(#arrowRed)" />
-            <polygon points="102,176 95,189 109,189" class="wpt-triangle-outer" />
-            <text x="102" y="168" class="chart-wpt-outer">CRD</text>
-            <text x="165" y="210" class="chart-spec">FL110 • R-55 • R-310</text>
-            <polygon points="258,280 251,293 265,293" class="wpt-triangle" />
-            <text x="235" y="315" class="chart-wpt-main">BRONZ</text>
-          </g>
+              <!-- 10 DME FIX Hold & KNK FIX Hold -->
+              <g class="holds-layer">
+                <!-- 10 DME FIX on R-170 (r=42 at 170 deg -> x=437.3, y=471.4) -->
+                <polygon points="437,466 432,476 442,476" class="wpt-triangle-fix" />
+                <text x="478" y="474" class="chart-fix-label">10 DME FIX</text>
+                <rect x="437" y="471" width="18" height="38" rx="9" class="hold-racetrack-red" />
+                <text x="492" y="492" class="chart-hold-min">1 dk</text>
 
-          <!-- 5 DME North & Arc to KNK FIX -->
-          <circle cx="424" cy="355" r="3.5" fill="#38bdf8" />
-          <text x="398" y="352" class="chart-fix-label">5 DME</text>
-          <path d="M 424 355 Q 485 350 522 396" fill="none" stroke="#38bdf8" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#arrowCyan)" />
+                <!-- KNK FIX on R-090 (r=55 at 90 deg -> x=485, y=430) -->
+                <circle cx="485" cy="430" r="3.5" fill="#38bdf8" />
+                <text x="488" y="420" class="chart-fix-label">KNK FIX</text>
+                <rect x="485" y="430" width="38" height="16" rx="8" class="hold-racetrack" />
+              </g>
 
-          <!-- CENTER: AYT VOR -->
-          <g class="vor-center">
-            <rect x="418" y="388" width="24" height="24" fill="#0b111e" stroke="#38bdf8" stroke-width="2" />
-            <polygon points="430,391 421,406 439,406" fill="none" stroke="#38bdf8" stroke-width="1.8" />
-            <circle cx="430" cy="401" r="2" fill="#38bdf8" />
-            <text x="398" y="428" class="vor-label">AYT VOR</text>
-          </g>
-        </svg>
-      </div>
-    </section>
+              <!-- CENTER: AYT VOR (430, 430) -->
+              <g class="vor-center">
+                <rect x="420" y="420" width="20" height="20" fill="#0b111e" stroke="#38bdf8" stroke-width="2" />
+                <polygon points="430,423 422,436 438,436" fill="none" stroke="#38bdf8" stroke-width="1.6" />
+                <circle cx="430" cy="431" r="2" fill="#38bdf8" />
+                <text x="396" y="454" class="vor-label">AYT VOR</text>
+              </g>
 
-    <!-- LIVE POSITION ESTIMATOR AT TIME T -->
-    <section class="card">
-      <div class="card-header">
-        <h2>🎯 Position Estimator at Time <code>T</code></h2>
-        <span class="badge-subtle">5 NM = 1 min</span>
-      </div>
-      <p class="card-sub">Enter any minute to see the exact DME distance or leg of every arrival and departure in the scenario.</p>
-      <div class="lookup-controls">
-        <label for="lookupTimeInput">Check Time:</label>
-        <input type="text" id="lookupTimeInput" value="10" placeholder="e.g. 10 or 10:10" />
-        <button type="button" class="time-step-btn lookup-step" data-step="-5">-5m</button>
-        <button type="button" class="time-step-btn lookup-step" data-step="-1">-1m</button>
-        <button type="button" class="time-step-btn lookup-step" data-step="1">+1m</button>
-        <button type="button" class="time-step-btn lookup-step" data-step="5">+5m</button>
-      </div>
-      <div id="positionSnapshotList" class="snapshot-list">
-        <!-- Populated by JS -->
-      </div>
-    </section>
+              <!-- DYNAMIC AIRCRAFT BLIPS LAYER -->
+              <g id="svgBlipsLayer"></g>
+            </svg>
+          </div>
+
+          <!-- SIDEBAR: LIVE AIRCRAFT STATUS AT TIME T -->
+          <div class="radar-sidebar">
+            <h3>✈️ Traffic Status at <code id="sidebarTimeLabel">:00</code></h3>
+            <div id="positionSnapshotList" class="snapshot-list">
+              <!-- Populated by JS -->
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <!-- ===================================================================== -->
+    <!-- VIEW 3: SCENARIO TIME VIEW (CHRONOLOGICAL ATC SCRIPT & TIMELINE)      -->
+    <!-- ===================================================================== -->
+    <div id="viewTimeline" class="view-panel hidden">
+      <section class="card">
+        <div class="card-header">
+          <div>
+            <h2>⏱️ Master Scenario Time View &amp; Controller Script</h2>
+            <p class="card-sub">
+              Minute-by-minute controller clearances, altitude instructions, 15 NM separation checks, EAT issuances, and handoffs generated by the Master Solver.
+            </p>
+          </div>
+        </div>
+
+        <!-- VISUAL GANTT TIMELINE BARS -->
+        <div id="ganttContainer" class="gantt-container">
+          <!-- Populated by JS -->
+        </div>
+
+        <!-- MINUTE-BY-MINUTE CONTROLLER ACTION SCRIPT -->
+        <h3 class="sub-table-title" style="margin-top: 1.25rem;">🎙️ Chronological ATC Clearance &amp; Event Log</h3>
+        <div id="masterTimelineScript" class="master-script-list">
+          <!-- Populated by JS -->
+        </div>
+      </section>
+    </div>
   </main>
 
   <script src="app.js"></script>
