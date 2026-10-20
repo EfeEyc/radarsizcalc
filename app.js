@@ -618,6 +618,95 @@ function renderLivePreview() {
   `;
 }
 
+// Helper to build <option> list for inline waypoint <select>
+function buildWaypointOptionsHtml(selectedWptId) {
+  return WAYPOINTS.map(
+    (w) =>
+      `<option value="${w.id}" ${w.id === selectedWptId ? "selected" : ""}>${w.name} (${w.entryWpt})</option>`
+  ).join("");
+}
+
+// Update all calculated cells in-place without destroying focused input elements
+function refreshCalculatedValuesOnly() {
+  const refHour = getReferenceBaseHour(state.aircraftList);
+  const arrivals = state.aircraftList.filter((a) => a.type !== "DEP");
+  const departures = state.aircraftList.filter((a) => a.type === "DEP");
+
+  const computedArrivals = arrivals.map((acft) => ({
+    acft,
+    wpt: WAYPOINTS.find((w) => w.id === acft.wptId) || WAYPOINTS[0],
+    calc: calculateArrivalCheckpoints(acft, state.activeRwy),
+  }));
+
+  const computedDepartures = departures.map((acft) => ({
+    acft,
+    wpt: WAYPOINTS.find((w) => w.id === acft.wptId) || WAYPOINTS[0],
+    calc: calculateDepartureCheckpoints(acft),
+  }));
+
+  const delayMap = computeArrivalDelays(computedArrivals, refHour);
+
+  // Update each Arrival row's calculated cells in-place
+  computedArrivals.forEach(({ acft, calc }) => {
+    const tr = document.querySelector(`tr[data-row-id="${acft.id}"]`);
+    if (!tr) return;
+
+    const delayInfo = delayMap.get(acft.id) || { willDelay: false };
+    const modeBtn = tr.querySelector("[data-toggle-mode]");
+    if (modeBtn) {
+      modeBtn.className = `badge ${calc.straightIn ? "badge-straight" : "badge-normal"}`;
+      modeBtn.textContent = calc.straightIn ? "STRAIGHT-IN" : "NORMAL";
+    }
+
+    const cell25 = tr.querySelector('[data-col="t25"]');
+    const cell10 = tr.querySelector('[data-col="t10"]');
+    const cellVor = tr.querySelector('[data-col="tVor"]');
+    const cellFix = tr.querySelector('[data-col="tFix"]');
+    const cellEst = tr.querySelector('[data-col="tEst"]');
+    const cellDelayStatus = tr.querySelector('[data-col="willDelay"]');
+
+    if (cell25) cell25.textContent = formatTime(calc.t25, calc.hasHour);
+    if (cell10) cell10.textContent = formatTime(calc.t10, calc.hasHour);
+    if (cellVor) {
+      cellVor.innerHTML = calc.straightIn
+        ? `<span style="color:var(--text-muted)">—</span>`
+        : formatTime(calc.tVor, calc.hasHour);
+    }
+    if (cellFix) {
+      cellFix.innerHTML = calc.straightIn
+        ? `<span style="color:var(--text-muted)">—</span>`
+        : formatTime(calc.tFix, calc.hasHour);
+    }
+    if (cellEst) cellEst.textContent = formatTime(calc.tEst, calc.hasHour);
+    if (cellDelayStatus) {
+      cellDelayStatus.innerHTML = `
+        <span class="badge ${delayInfo.willDelay ? "badge-delayed" : "badge-nodelay"}">
+          ${delayInfo.willDelay ? "DELAYED" : "NO DELAY"}
+        </span>
+      `;
+    }
+  });
+
+  // Update each Departure row's calculated cells in-place
+  computedDepartures.forEach(({ acft, calc }) => {
+    const tr = document.querySelector(`tr[data-row-id="${acft.id}"]`);
+    if (!tr) return;
+
+    const cell10 = tr.querySelector('[data-col="dep10"]');
+    const cell25 = tr.querySelector('[data-col="dep25"]');
+    const cell50 = tr.querySelector('[data-col="dep50"]');
+    const cell60 = tr.querySelector('[data-col="dep60"]');
+
+    if (cell10) cell10.textContent = formatTime(calc.t10, calc.hasHour);
+    if (cell25) cell25.textContent = formatTime(calc.t25, calc.hasHour);
+    if (cell50) cell50.textContent = formatTime(calc.t50, calc.hasHour);
+    if (cell60) cell60.textContent = formatTime(calc.t60, calc.hasHour);
+  });
+
+  renderConflictsAndDelays(computedArrivals, computedDepartures, delayMap, refHour);
+  renderPositionLookup([...computedArrivals, ...computedDepartures], refHour);
+}
+
 // Render Scenario Sheet, Departures Sub-Table, Conflicts & Delays, and Position Lookup
 function renderScenarioBoard() {
   const arrTbody = document.getElementById("scenarioTableBody");
@@ -644,24 +733,44 @@ function renderScenarioBoard() {
 
   const delayMap = computeArrivalDelays(computedArrivals, refHour);
 
-  summaryText.textContent = `${computedArrivals.length} Arrival(s), ${computedDepartures.length} Departure(s) • Active Runway: RWY ${state.activeRwy}`;
+  summaryText.textContent = `${computedArrivals.length} Arrival(s), ${computedDepartures.length} Departure(s) • All fields are directly editable below.`;
 
-  // 1. Render Arrivals Table (Clean Numbers Only)
+  // 1. Render Arrivals Table (Editable Inputs + Clean Calculated Numbers)
   if (computedArrivals.length === 0) {
     arrTbody.innerHTML = `
       <tr class="empty-row">
-        <td colspan="12">No arriving aircraft added yet.</td>
+        <td colspan="13">No arriving aircraft added yet.</td>
       </tr>
     `;
   } else {
     arrTbody.innerHTML = "";
-    computedArrivals.forEach(({ acft, wpt, calc }) => {
-      const delayInfo = delayMap.get(acft.id) || { willDelay: false, blockers: [] };
+    computedArrivals.forEach(({ acft, calc }) => {
+      const delayInfo = delayMap.get(acft.id) || { willDelay: false };
       const tr = document.createElement("tr");
+      tr.setAttribute("data-row-id", acft.id);
 
       tr.innerHTML = `
-        <td class="callsign-cell">${acft.callsign}</td>
-        <td class="wpt-cell">${wpt.name} <span class="wpt-entry-badge">${wpt.entryWpt}</span></td>
+        <td>
+          <input
+            type="text"
+            class="inline-input inline-callsign"
+            data-edit-field="callsign"
+            data-id="${acft.id}"
+            value="${acft.callsign}"
+            maxlength="12"
+            aria-label="Edit Callsign"
+          />
+        </td>
+        <td>
+          <select
+            class="inline-select inline-wpt"
+            data-edit-field="wptId"
+            data-id="${acft.id}"
+            aria-label="Edit Waypoint"
+          >
+            ${buildWaypointOptionsHtml(acft.wptId)}
+          </select>
+        </td>
         <td>
           <button type="button" class="badge ${
             calc.straightIn ? "badge-straight" : "badge-normal"
@@ -669,17 +778,39 @@ function renderScenarioBoard() {
             ${calc.straightIn ? "STRAIGHT-IN" : "NORMAL"}
           </button>
         </td>
-        <td class="time-cell">${formatTime(calc.tInit, calc.hasHour)}</td>
-        <td class="time-cell">${formatTime(calc.t25, calc.hasHour)}</td>
-        <td class="time-cell">${formatTime(calc.t10, calc.hasHour)}</td>
-        <td class="time-cell">${
+        <td>
+          <input
+            type="number"
+            class="inline-input inline-dist"
+            data-edit-field="dist"
+            data-id="${acft.id}"
+            value="${calc.dist}"
+            min="5"
+            max="150"
+            step="1"
+            aria-label="Edit Distance NM"
+          />
+        </td>
+        <td>
+          <input
+            type="text"
+            class="inline-input inline-time"
+            data-edit-field="timeRaw"
+            data-id="${acft.id}"
+            value="${acft.timeRaw}"
+            aria-label="Edit Initial Time"
+          />
+        </td>
+        <td class="time-cell" data-col="t25">${formatTime(calc.t25, calc.hasHour)}</td>
+        <td class="time-cell" data-col="t10">${formatTime(calc.t10, calc.hasHour)}</td>
+        <td class="time-cell" data-col="tVor">${
           calc.straightIn ? `<span style="color:var(--text-muted)">—</span>` : formatTime(calc.tVor, calc.hasHour)
         }</td>
-        <td class="time-cell">${
+        <td class="time-cell" data-col="tFix">${
           calc.straightIn ? `<span style="color:var(--text-muted)">—</span>` : formatTime(calc.tFix, calc.hasHour)
         }</td>
-        <td class="time-cell">${formatTime(calc.tEst, calc.hasHour)}</td>
-        <td>
+        <td class="time-cell" data-col="tEst">${formatTime(calc.tEst, calc.hasHour)}</td>
+        <td data-col="willDelay">
           <span class="badge ${delayInfo.willDelay ? "badge-delayed" : "badge-nodelay"}">
             ${delayInfo.willDelay ? "DELAYED" : "NO DELAY"}
           </span>
@@ -687,9 +818,15 @@ function renderScenarioBoard() {
         <td>
           <div class="hold-controls">
             <button type="button" class="hold-btn" data-hold-id="${acft.id}" data-hold-delta="-1">-1m</button>
-            <span class="hold-val ${calc.holdMins !== 0 ? "active-hold" : ""}">
-              ${calc.holdMins > 0 ? `+${calc.holdMins}m` : `${calc.holdMins}m`}
-            </span>
+            <input
+              type="number"
+              class="inline-input inline-hold"
+              data-edit-field="holdMins"
+              data-id="${acft.id}"
+              value="${calc.holdMins}"
+              step="1"
+              aria-label="Edit Manual Delay"
+            />
             <button type="button" class="hold-btn" data-hold-id="${acft.id}" data-hold-delta="1">+1m</button>
           </div>
         </td>
@@ -702,23 +839,52 @@ function renderScenarioBoard() {
     });
   }
 
-  // 2. Render Departures Sub-Table
+  // 2. Render Departures Sub-Table (Editable Callsign, Waypoint, and Dep Time)
   if (computedDepartures.length === 0) {
     depSection.classList.add("hidden");
     depTbody.innerHTML = "";
   } else {
     depSection.classList.remove("hidden");
     depTbody.innerHTML = "";
-    computedDepartures.forEach(({ acft, wpt, calc }) => {
+    computedDepartures.forEach(({ acft, calc }) => {
       const tr = document.createElement("tr");
+      tr.setAttribute("data-row-id", acft.id);
       tr.innerHTML = `
-        <td class="callsign-cell">${acft.callsign}</td>
-        <td class="wpt-cell">${wpt.name} <span class="wpt-entry-badge">${wpt.entryWpt}</span></td>
-        <td class="time-cell">${formatTime(calc.tDep, calc.hasHour)}</td>
-        <td class="time-cell">${formatTime(calc.t10, calc.hasHour)}</td>
-        <td class="time-cell">${formatTime(calc.t25, calc.hasHour)}</td>
-        <td class="time-cell">${formatTime(calc.t50, calc.hasHour)}</td>
-        <td class="time-cell">${formatTime(calc.t60, calc.hasHour)}</td>
+        <td>
+          <input
+            type="text"
+            class="inline-input inline-callsign"
+            data-edit-field="callsign"
+            data-id="${acft.id}"
+            value="${acft.callsign}"
+            maxlength="12"
+            aria-label="Edit Departure Callsign"
+          />
+        </td>
+        <td>
+          <select
+            class="inline-select inline-wpt"
+            data-edit-field="wptId"
+            data-id="${acft.id}"
+            aria-label="Edit Departure Waypoint"
+          >
+            ${buildWaypointOptionsHtml(acft.wptId)}
+          </select>
+        </td>
+        <td>
+          <input
+            type="text"
+            class="inline-input inline-time"
+            data-edit-field="timeRaw"
+            data-id="${acft.id}"
+            value="${acft.timeRaw}"
+            aria-label="Edit Departure Time"
+          />
+        </td>
+        <td class="time-cell" data-col="dep10">${formatTime(calc.t10, calc.hasHour)}</td>
+        <td class="time-cell" data-col="dep25">${formatTime(calc.t25, calc.hasHour)}</td>
+        <td class="time-cell" data-col="dep50">${formatTime(calc.t50, calc.hasHour)}</td>
+        <td class="time-cell" data-col="dep60">${formatTime(calc.t60, calc.hasHour)}</td>
         <td>
           <button type="button" class="row-del-btn" data-del-id="${acft.id}" title="Remove departure">✕</button>
         </td>
@@ -727,7 +893,36 @@ function renderScenarioBoard() {
     });
   }
 
-  // Wire up table buttons
+  // Wire up inline editable fields (updates live on input without losing cursor focus)
+  document.querySelectorAll("[data-edit-field]").forEach((inputEl) => {
+    const field = inputEl.getAttribute("data-edit-field");
+    const id = Number(inputEl.getAttribute("data-id"));
+
+    const handleUpdate = () => {
+      const target = state.aircraftList.find((a) => a.id === id);
+      if (!target) return;
+
+      if (field === "callsign") {
+        target.callsign = inputEl.value.toUpperCase();
+      } else if (field === "wptId") {
+        target.wptId = inputEl.value;
+      } else if (field === "dist") {
+        target.dist = Number(inputEl.value) || 0;
+      } else if (field === "timeRaw") {
+        target.timeRaw = inputEl.value;
+      } else if (field === "holdMins") {
+        target.holdMins = Number(inputEl.value) || 0;
+      }
+
+      saveState();
+      refreshCalculatedValuesOnly();
+    };
+
+    inputEl.addEventListener("input", handleUpdate);
+    inputEl.addEventListener("change", handleUpdate);
+  });
+
+  // Wire up Delete buttons
   document.querySelectorAll("[data-del-id]").forEach((btn) => {
     btn.addEventListener("click", () => {
       const id = Number(btn.getAttribute("data-del-id"));
@@ -737,6 +932,7 @@ function renderScenarioBoard() {
     });
   });
 
+  // Wire up Hold -1m / +1m steppers
   arrTbody.querySelectorAll("[data-hold-id]").forEach((btn) => {
     btn.addEventListener("click", () => {
       const id = Number(btn.getAttribute("data-hold-id"));
@@ -750,6 +946,7 @@ function renderScenarioBoard() {
     });
   });
 
+  // Wire up Approach Mode toggle badge
   arrTbody.querySelectorAll("[data-toggle-mode]").forEach((btn) => {
     btn.addEventListener("click", () => {
       const id = Number(btn.getAttribute("data-toggle-mode"));
@@ -936,15 +1133,15 @@ function initApp() {
     distFieldGroup.classList.toggle("hidden", isDep);
     approachOverrideGroup.classList.toggle("hidden", isDep);
 
-    wptFieldLabel.textContent = isDep
-      ? "1. Departure Waypoint / Exit Fix"
-      : "1. Waypoint / Entry Fix";
-    timeFieldLabel.innerHTML = isDep
-      ? `2. Departure Time at 0 NM <span class="hint">(e.g. <code>04</code> or <code>10:04</code>)</span>`
-      : `3. Report Time <span class="hint">(e.g. <code>0</code>, <code>05</code>, or <code>10:05</code>)</span>`;
     metaFieldLabel.textContent = isDep
-      ? "3. Callsign (Optional)"
-      : "4. Callsign (Optional) & Approach Type";
+      ? "1. Callsign"
+      : "1. Callsign & Approach Type";
+    wptFieldLabel.textContent = isDep
+      ? "2. Departure Waypoint / Exit Fix"
+      : "2. Waypoint / Entry Fix";
+    timeFieldLabel.innerHTML = isDep
+      ? `3. Departure Time at 0 NM <span class="hint">(e.g. <code>04</code> or <code>10:04</code>)</span>`
+      : `4. Report Time <span class="hint">(e.g. <code>0</code>, <code>05</code>, or <code>10:05</code>)</span>`;
 
     btnSubmitAircraft.classList.toggle("dep-mode", isDep);
     btnSubmitAircraft.innerHTML = isDep
@@ -985,38 +1182,33 @@ function initApp() {
     updateRwyUI();
   });
 
+  // Distance Input & Step Buttons (-5, -1, +1, +5)
   const inputDist = document.getElementById("inputDist");
-  const presetBtns = document.querySelectorAll(".preset-btn");
 
-  function syncDistButtons(val) {
-    presetBtns.forEach((btn) => {
-      btn.classList.toggle("active", Number(btn.getAttribute("data-dist")) === Number(val));
-    });
-  }
+  inputDist.addEventListener("input", () => {
+    state.selectedDist = Number(inputDist.value) || 0;
+    renderLivePreview();
+  });
 
-  presetBtns.forEach((btn) => {
+  document.querySelectorAll(".dist-step-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
-      const d = Number(btn.getAttribute("data-dist"));
-      state.selectedDist = d;
-      inputDist.value = d;
-      syncDistButtons(d);
+      const step = Number(btn.getAttribute("data-dist-step"));
+      const cur = Number(inputDist.value) || 60;
+      const nextDist = Math.max(5, cur + step);
+      inputDist.value = nextDist;
+      state.selectedDist = nextDist;
       renderLivePreview();
     });
   });
 
-  inputDist.addEventListener("input", () => {
-    state.selectedDist = Number(inputDist.value) || 0;
-    syncDistButtons(state.selectedDist);
-    renderLivePreview();
-  });
-
+  // Time Input & Step Buttons (-5m, -1m, +1m, +5m)
   const inputTime = document.getElementById("inputTime");
   inputTime.addEventListener("input", () => {
     state.inputTimeRaw = inputTime.value;
     renderLivePreview();
   });
 
-  document.querySelectorAll(".quick-time-btns .time-step-btn").forEach((btn) => {
+  document.querySelectorAll(".minute-step-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
       const step = Number(btn.getAttribute("data-step"));
       const parsed = parseTimeInput(inputTime.value);
@@ -1031,12 +1223,14 @@ function initApp() {
     });
   });
 
+  // Callsign Input
   const inputCallsign = document.getElementById("inputCallsign");
   inputCallsign.addEventListener("input", () => {
     state.inputCallsign = inputCallsign.value;
     renderLivePreview();
   });
 
+  // Approach Mode Override Buttons
   const modeBtns = document.querySelectorAll(".mode-btn");
   modeBtns.forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -1046,6 +1240,7 @@ function initApp() {
     });
   });
 
+  // Add Aircraft Form Submit
   const aircraftForm = document.getElementById("aircraftForm");
   aircraftForm.addEventListener("submit", (e) => {
     e.preventDefault();
@@ -1136,11 +1331,6 @@ function initApp() {
       state.lookupTimeRaw = lookupTimeInput.value;
       renderScenarioBoard();
     });
-  });
-
-  // Scroll to native chart on button click
-  document.getElementById("btnToggleChart").addEventListener("click", () => {
-    document.getElementById("nativeChartSection").scrollIntoView({ behavior: "smooth" });
   });
 
   // Interactive native SVG chart corridors
