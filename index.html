@@ -237,10 +237,13 @@
       <section class="card solver-card">
         <div class="card-header">
           <div>
-            <h2>🧠 Master Scenario Solver (Altitudes, EATs &amp; Separation)</h2>
+            <h2>🧠 Master Scenario Solver (Altitudes, EATs &amp; Live Separation)</h2>
             <p class="card-sub">
-              Solves altitude descents/climbs (MEA → MSA @ 25 NM → 3,000' @ ILS), <strong>1,000 ft VOR separation before 15 NM</strong>, opposite-direction Departure ↔ Arrival locks, and <strong>Expected Approach Times (EAT)</strong>.
+              Live time-step simulation (0.2m / 1 NM intervals) solving descents/climbs (MEA → MSA @ 25 NM → Stack/3,000' @ ILS), <strong>1,000 ft VOR separation inside 15 NM</strong>, multi-aircraft holding stacks, and Departure ↔ Arrival conflicts.
             </p>
+          </div>
+          <div id="liveSimBadge" class="freq-badges">
+            <!-- Populated by JS with live time-step verification stats -->
           </div>
         </div>
 
@@ -253,8 +256,8 @@
           <!-- PART 1: DEPARTURE vs ARRIVAL CONFLICTS -->
           <div class="conflict-panel">
             <div class="panel-header">
-              <h3>⚔️ Departure ↔ Arrival Radial Conflicts</h3>
-              <span class="badge-subtle">Same Waypoint</span>
+              <h3>⚔️ Departure ↔ Arrival Conflicts</h3>
+              <span class="badge-subtle">Same-Radial &amp; &lt;15 NM VOR</span>
             </div>
             <div id="depArrConflictList" class="conflict-list">
               <!-- Populated by JS -->
@@ -264,8 +267,8 @@
           <!-- PART 2: VOR <15 NM CONVERGENCE & EAT ANALYSIS -->
           <div class="conflict-panel">
             <div class="panel-header">
-              <h3>📐 VOR &lt;15 NM Separation &amp; EAT Delays</h3>
-              <span class="badge-subtle">1,000 ft Minima &amp; ILS Window</span>
+              <h3>📐 VOR &lt;15 NM Separation, Stack &amp; EATs</h3>
+              <span class="badge-subtle">Live 0.2m Step Checks &amp; Hold Stack</span>
             </div>
             <div id="ilsDelayList" class="conflict-list">
               <!-- Populated by JS -->

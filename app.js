@@ -375,12 +375,27 @@ function calculateDepartureCheckpoints({ wptId, timeRaw, fl }) {
 }
 
 // ============================================================================
-// MASTER SCENARIO SOLVER ENGINE
+// MASTER SCENARIO SOLVER & LIVE TIME-STEP SIMULATION ENGINE (dt = 0.2m / 1 NM)
 // Solves:
 // 1. Optimal Landing Sequence & EATs (Expected Approach Times)
-// 2. Opposite-Direction Departure <-> Arrival Crossing & Altitude Locks
-// 3. VOR <15 NM Convergence 1,000 ft Separation & Altitude Crossing Constraints
+// 2. Dynamic Multi-Aircraft Approach & Holding Stack (3,000', 4,000', 5,000', 6,000'...)
+//    with automatic 1,000' step-downs as preceding aircraft establish
+// 3. Same-Waypoint & Cross-Radial (<15 NM VOR) Departure <-> Arrival Separation
+// 4. Live 0.2-min (1 NM) Time-Step Verification across all active traffic pairs
 // ============================================================================
+function evaluateTimelineAlt(altTimeline, t, fallbackAlt) {
+  if (!altTimeline || altTimeline.length === 0) return fallbackAlt;
+  let activeAlt = altTimeline[0].altFt;
+  for (let i = 0; i < altTimeline.length; i++) {
+    if (t + 1e-6 >= altTimeline[i].tFrom) {
+      activeAlt = altTimeline[i].altFt;
+    } else {
+      break;
+    }
+  }
+  return activeAlt;
+}
+
 function solveScenario(aircraftList, activeRwy) {
   const refHour = getReferenceBaseHour(aircraftList);
   const useHasHour = refHour !== null;
@@ -415,28 +430,280 @@ function solveScenario(aircraftList, activeRwy) {
       calc,
       normDep: normalizeTime(calc.tDep, calc.hasHour, refHour),
       norm10: normalizeTime(calc.t10, calc.hasHour, refHour),
+      norm15: normalizeTime(calc.t15, calc.hasHour, refHour),
       norm25: normalizeTime(calc.t25, calc.hasHour, refHour),
       norm60: normalizeTime(calc.t60, calc.hasHour, refHour),
     };
   });
 
   // --------------------------------------------------------------------------
-  // STEP 1: Opposite-Direction Departure <-> Arrival Conflicts (Same Waypoint)
+  // STEP 1: Arrival Sequencing & Expected Approach Time (EAT) Calculation
+  // --------------------------------------------------------------------------
+  const sequencedArrivals = [...computedArrivals].sort((a, b) => {
+    if (a.normClearBase !== b.normClearBase) return a.normClearBase - b.normClearBase;
+    if (a.wpt.msaFt !== b.wpt.msaFt) return a.wpt.msaFt - b.wpt.msaFt;
+    return a.acft.id - b.acft.id;
+  });
+
+  const eatMap = new Map();
+  let prevEstNorm = null;
+  let prevAcft = null;
+
+  sequencedArrivals.forEach((item, index) => {
+    const { acft, calc } = item;
+    const manualHold = calc.holdMins || 0;
+
+    let willDelay = false;
+    let eatNorm = null;
+    let autoHoldMins = 0;
+    let effectiveFixNorm = item.normFixBase;
+    let effectiveEstNorm = null;
+    let clearancePhaseNote = "";
+
+    if (prevEstNorm !== null && item.normClearBase < prevEstNorm) {
+      willDelay = true;
+      eatNorm = prevEstNorm;
+
+      if (calc.straightIn) {
+        if (eatNorm <= item.norm10) {
+          autoHoldMins = 0;
+          effectiveEstNorm = item.norm10 + manualHold;
+          const dmeAtEat = +(10 + (item.norm10 - eatNorm) * SPEED_NM_PER_MIN).toFixed(1);
+          clearancePhaseNote = `Gets ILS clearance at EAT (${formatTime(
+            denormalizeTime(eatNorm, calc.hasHour, refHour),
+            calc.hasHour
+          )}) at ${dmeAtEat} NM — No hold needed`;
+        } else {
+          autoHoldMins = +(eatNorm - item.norm10).toFixed(1);
+          effectiveEstNorm = eatNorm + 5 + manualHold;
+          clearancePhaseNote = `Holds ${autoHoldMins}m at 10 DME FIX until EAT (${formatTime(
+            denormalizeTime(eatNorm, calc.hasHour, refHour),
+            calc.hasHour
+          )}), then +5m to Establish`;
+        }
+      } else {
+        if (eatNorm <= item.normFixBase) {
+          autoHoldMins = 0;
+          effectiveFixNorm = item.normFixBase + manualHold;
+          effectiveEstNorm = effectiveFixNorm + 5;
+          if (eatNorm <= item.normVor) {
+            const dmeToVor = +((item.normVor - eatNorm) * SPEED_NM_PER_MIN).toFixed(1);
+            clearancePhaseNote = `EAT is ${formatTime(
+              denormalizeTime(eatNorm, calc.hasHour, refHour),
+              calc.hasHour
+            )} (at ${
+              dmeToVor === 0 ? "AYT VOR" : `${dmeToVor} NM inbound to VOR`
+            }) — No hold occurs!`;
+          } else {
+            const dmeOut = +((eatNorm - item.normVor) * SPEED_NM_PER_MIN).toFixed(1);
+            clearancePhaseNote = `EAT is ${formatTime(
+              denormalizeTime(eatNorm, calc.hasHour, refHour),
+              calc.hasHour
+            )} (at ${dmeOut} NM outbound to 10 DME FIX) — No hold occurs!`;
+          }
+        } else {
+          autoHoldMins = +(eatNorm - item.normFixBase).toFixed(1);
+          effectiveFixNorm = eatNorm + manualHold;
+          effectiveEstNorm = effectiveFixNorm + 5;
+          clearancePhaseNote = `Holds ${autoHoldMins}m at 10 DME FIX until EAT (${formatTime(
+            denormalizeTime(eatNorm, calc.hasHour, refHour),
+            calc.hasHour
+          )}), then +5m to full establish`;
+        }
+      }
+    } else {
+      willDelay = false;
+      eatNorm = null;
+      autoHoldMins = 0;
+      if (calc.straightIn) {
+        effectiveEstNorm = item.norm10 + manualHold;
+        clearancePhaseNote = `Cleared Straight-In ILS at 25 NM`;
+      } else {
+        effectiveFixNorm = item.normFixBase + manualHold;
+        effectiveEstNorm = effectiveFixNorm + 5;
+        clearancePhaseNote = `Cleared ILS at 10 NM`;
+      }
+    }
+
+    const effectiveClearNorm = willDelay ? eatNorm : item.normClearBase;
+    const eatDisplay =
+      eatNorm !== null
+        ? formatTime(denormalizeTime(eatNorm, calc.hasHour, refHour), calc.hasHour)
+        : "—";
+    const effectiveFixDisplay =
+      effectiveFixNorm !== null
+        ? formatTime(denormalizeTime(effectiveFixNorm, calc.hasHour, refHour), calc.hasHour)
+        : "—";
+    const effectiveEstDisplay = formatTime(
+      denormalizeTime(effectiveEstNorm, calc.hasHour, refHour),
+      calc.hasHour
+    );
+
+    // Dynamic Multi-Aircraft Holding Stack Calculation (4,000', 5,000', 6,000'...)
+    // Find all preceding arrivals still un-established when this aircraft reaches its inner stack entry
+    const stackEntryTime = item.norm10;
+    let initialHoldAltFt = 4000;
+    const holdStepDowns = [];
+
+    if (willDelay && stackEntryTime < eatNorm) {
+      const activeAheadAt10 = [];
+      for (let k = 0; k < index; k++) {
+        const pred = sequencedArrivals[k];
+        const predEat = eatMap.get(pred.acft.id);
+        if (predEat && predEat.effectiveEstNorm > stackEntryTime + 1e-6) {
+          activeAheadAt10.push({ item: pred, eat: predEat });
+        }
+      }
+      // m aircraft ahead not yet established -> occupy 3,000' .. 3000 + (m-1)*1000
+      const m = Math.max(1, activeAheadAt10.length);
+      initialHoldAltFt = 3000 + m * 1000;
+
+      // As each preceding aircraft (before the final blocker) establishes, step down 1,000'
+      for (let p = 0; p < activeAheadAt10.length - 1; p++) {
+        const estEventTime = activeAheadAt10[p].eat.effectiveEstNorm;
+        if (estEventTime > stackEntryTime + 1e-6 && estEventTime < eatNorm - 1e-6) {
+          const remAhead = activeAheadAt10.length - 1 - p;
+          const stepAltFt = 3000 + remAhead * 1000;
+          const prevAltFt = stepAltFt + 1000;
+          holdStepDowns.push({
+            timeNorm: estEventTime,
+            timeStr: formatTime(
+              denormalizeTime(estEventTime, calc.hasHour, refHour),
+              calc.hasHour
+            ),
+            prevAltFt,
+            altFt: stepAltFt,
+            establishedAcft: activeAheadAt10[p].item.acft,
+            nextClearedAcft: activeAheadAt10[p + 1].item.acft,
+          });
+        }
+      }
+    }
+
+    eatMap.set(acft.id, {
+      seqNum: index + 1,
+      willDelay,
+      blockedBy: willDelay ? prevAcft : null,
+      eatNorm,
+      eatDisplay,
+      autoHoldMins,
+      effectiveFixNorm,
+      effectiveFixDisplay,
+      effectiveEstNorm,
+      effectiveEstDisplay,
+      effectiveClearNorm,
+      clearancePhaseNote,
+      initialHoldAltFt,
+      holdStepDowns,
+    });
+
+    prevEstNorm = effectiveEstNorm;
+    prevAcft = item;
+  });
+
+  // Helper: query inner approach/hold stack altitude of arrival #k at time t (if inside 10 NM / on ILS)
+  function getInnerStackAltAt(arrItem, t) {
+    const eatInfo = eatMap.get(arrItem.acft.id);
+    if (!eatInfo) return null;
+    const tStartInner = arrItem.calc.straightIn ? arrItem.normClearBase : arrItem.norm10;
+    if (t + 1e-6 < tStartInner || t >= eatInfo.effectiveEstNorm - 1e-6) return null;
+    if (t + 1e-6 >= eatInfo.effectiveClearNorm) return 3000;
+    if (arrItem.calc.straightIn && t < arrItem.norm10 - 1e-6) {
+      return Math.max(arrItem.wpt.msaFt, eatInfo.initialHoldAltFt);
+    }
+    let curHoldAlt = eatInfo.initialHoldAltFt;
+    for (const sd of eatInfo.holdStepDowns) {
+      if (t + 1e-6 >= sd.timeNorm) {
+        curHoldAlt = sd.altFt;
+      }
+    }
+    return curHoldAlt;
+  }
+
+  // --------------------------------------------------------------------------
+  // STEP 2: Same-Waypoint & Cross-Radial (<15 NM VOR) Departure <-> Arrival Conflicts
   // --------------------------------------------------------------------------
   const depArrConflicts = [];
   const arrDepLocks = new Map(); // arrId -> list of lock instructions
   const depArrLocks = new Map(); // depId -> list of lock instructions
 
   computedDepartures.forEach((depItem) => {
+    const wptDep = depItem.wpt;
+    const tDepNorm = depItem.normDep;
+    const tDepExit15 = depItem.norm15; // tDep + 3m (15 NM)
+
+    // Check if any arrival is in the inner approach/hold stack (3,000', 4,000'...) while this departure
+    // is inside 15 NM, which matters when wptDep.msaFt === 3,000' (e.g. DERYA or MANAV)
+    let innerStackFloorForDep = wptDep.msaFt;
+    const innerStackTraffic = [];
+    sequencedArrivals.forEach((arrItem) => {
+      for (let t = tDepNorm; t < tDepExit15; t = +(t + 0.2).toFixed(2)) {
+        const stAlt = getInnerStackAltAt(arrItem, t);
+        if (stAlt !== null && stAlt >= innerStackFloorForDep && wptDep.msaFt <= 4000) {
+          // Only raise floor if not head-on locked below this same arrival
+          const sameWptInbound =
+            arrItem.acft.wptId === depItem.acft.wptId && arrItem.normRadialZero >= tDepNorm;
+          if (!sameWptInbound) {
+            innerStackFloorForDep = Math.max(innerStackFloorForDep, stAlt + 1000);
+            if (!innerStackTraffic.some((a) => a.id === arrItem.acft.id)) {
+              innerStackTraffic.push(arrItem.acft);
+            }
+          }
+        }
+      }
+    });
+
+    if (innerStackFloorForDep > wptDep.msaFt && innerStackTraffic.length > 0) {
+      const climbTarget = Math.min(
+        depItem.calc.reqAltFt,
+        Math.max(innerStackFloorForDep, wptDep.meaFt)
+      );
+      const trafficNames = innerStackTraffic.map((a) => a.callsign).join(", ");
+      const resText = `VOR <15 NM Approach Stack Protection: ${trafficNames} active on approach/hold up to ${formatAlt(
+        innerStackFloorForDep - 1000
+      )}. Since ${wptDep.name} MSA is ${formatAlt(wptDep.msaFt)}, climb ${
+        depItem.acft.callsign
+      } directly to ≥${formatAlt(innerStackFloorForDep)} (or ${formatAlt(
+        climbTarget
+      )}) before 10 NM to stay ≥1,000' above the inner stack.`;
+
+      if (!depArrLocks.has(depItem.acft.id)) depArrLocks.set(depItem.acft.id, []);
+      depArrLocks.get(depItem.acft.id).push({
+        type: "STACK_FLOOR",
+        arrAcft: innerStackTraffic[0],
+        tCrossNorm: tDepExit15,
+        dCross: 15,
+        depMinInitialAltFt: innerStackFloorForDep,
+        depRestrictedAltFt: depItem.calc.reqAltFt,
+        resolutionText: resText,
+      });
+
+      depArrConflicts.push({
+        depAcft: depItem.acft,
+        arrAcft: innerStackTraffic[0],
+        wpt: wptDep,
+        tCrossNorm: tDepNorm,
+        displayTime: `${formatTime(depItem.calc.tDep, depItem.calc.hasHour)}–${formatTime(
+          depItem.calc.t15,
+          depItem.calc.hasHour
+        )}`,
+        dCross: "0–15",
+        zone: "< 15 NM (VOR Approach Stack Separation)",
+        isValidInboundConflict: true,
+        arrRestrictedAltFt: innerStackFloorForDep - 1000,
+        depRestrictedAltFt: innerStackFloorForDep,
+        resolutionText: resText,
+      });
+    }
+
+    // 2A. Same-Waypoint Opposite-Direction Crossing
     const matchingArrs = computedArrivals.filter(
       (arrItem) => arrItem.acft.wptId === depItem.acft.wptId
     );
 
     matchingArrs.forEach((arrItem) => {
       const wpt = depItem.wpt;
-      const tDepNorm = depItem.normDep;
       const tArrZeroNorm = arrItem.normRadialZero;
-
       const tCrossNorm = (tDepNorm + tArrZeroNorm) / 2;
       const dCross = +(SPEED_NM_PER_MIN * (tCrossNorm - tDepNorm)).toFixed(1);
       const isValidInboundConflict = dCross >= 0 && dCross <= Math.max(arrItem.calc.dist, 60);
@@ -448,8 +715,6 @@ function solveScenario(aircraftList, activeRwy) {
 
       if (isValidInboundConflict) {
         if (dCross >= 25) {
-          // Conflict at or outside 25 NM (e.g. 30 NM):
-          // Dep must be at MEA before 25 NM -> Dep climbs to MEA, Arr descends only to MEA + 1000'
           zone = "≥ 25 NM (Enroute / MEA Zone)";
           depRestrictedAltFt = wpt.meaFt;
           arrRestrictedAltFt = wpt.meaFt + 1000;
@@ -462,11 +727,11 @@ function solveScenario(aircraftList, activeRwy) {
             useHasHour
           )}, continue climb/descent.`;
         } else if (dCross >= 10) {
-          // Conflict between 10 NM and 25 NM:
           zone = "10–25 NM (MSA Transition Zone)";
-          if (wpt.msaFt < wpt.meaFt) {
-            depRestrictedAltFt = wpt.msaFt;
-            arrRestrictedAltFt = wpt.msaFt + 1000;
+          const safeDepMsa = Math.max(wpt.msaFt, innerStackFloorForDep);
+          if (safeDepMsa < wpt.meaFt) {
+            depRestrictedAltFt = safeDepMsa;
+            arrRestrictedAltFt = safeDepMsa + 1000;
             resolutionText = `Conflict at ${dCross} NM (10–25 NM): Climb ${depItem.acft.callsign} to ${formatAlt(
               depRestrictedAltFt
             )} (MSA before 10 NM) and hold ${arrItem.acft.callsign} at ${formatAlt(
@@ -476,7 +741,6 @@ function solveScenario(aircraftList, activeRwy) {
               useHasHour
             )}; then climb ${depItem.acft.callsign} to ${formatAlt(wpt.meaFt)} before 25 NM.`;
           } else {
-            // e.g. ALPAY where MSA = 12,000' and MEA = FL120
             depRestrictedAltFt = wpt.meaFt;
             arrRestrictedAltFt = wpt.meaFt + 1000;
             resolutionText = `Conflict at ${dCross} NM (MSA = MEA = ${formatAlt(
@@ -491,10 +755,9 @@ function solveScenario(aircraftList, activeRwy) {
             )}.`;
           }
         } else {
-          // Conflict inside 10 NM (<10 NM)
           zone = "< 10 NM (Inner Approach / MSA Zone)";
-          depRestrictedAltFt = wpt.msaFt;
-          arrRestrictedAltFt = wpt.msaFt + 1000;
+          depRestrictedAltFt = Math.max(wpt.msaFt, innerStackFloorForDep);
+          arrRestrictedAltFt = depRestrictedAltFt + 1000;
           resolutionText = `Conflict at ${dCross} NM (<10 NM): Keep ${arrItem.acft.callsign} at ${formatAlt(
             arrRestrictedAltFt
           )} and ${depItem.acft.callsign} at ${formatAlt(
@@ -507,6 +770,7 @@ function solveScenario(aircraftList, activeRwy) {
 
         if (!arrDepLocks.has(arrItem.acft.id)) arrDepLocks.set(arrItem.acft.id, []);
         arrDepLocks.get(arrItem.acft.id).push({
+          type: "SAME_RADIAL",
           depAcft: depItem.acft,
           tCrossNorm,
           dCross,
@@ -517,6 +781,7 @@ function solveScenario(aircraftList, activeRwy) {
 
         if (!depArrLocks.has(depItem.acft.id)) depArrLocks.set(depItem.acft.id, []);
         depArrLocks.get(depItem.acft.id).push({
+          type: "SAME_RADIAL",
           arrAcft: arrItem.acft,
           tCrossNorm,
           dCross,
@@ -544,321 +809,593 @@ function solveScenario(aircraftList, activeRwy) {
         arrDist: arrItem.calc.dist,
       });
     });
-  });
 
-  // --------------------------------------------------------------------------
-  // STEP 2: Arrival Sequencing & Expected Approach Time (EAT) Calculation
-  // --------------------------------------------------------------------------
-  // Order arrivals by their natural ILS clearance point (tie-breaker: lower MSA first to avoid altitude crossing, then id)
-  const sequencedArrivals = [...computedArrivals].sort((a, b) => {
-    if (a.normClearBase !== b.normClearBase) return a.normClearBase - b.normClearBase;
-    if (a.wpt.msaFt !== b.wpt.msaFt) return a.wpt.msaFt - b.wpt.msaFt;
-    return a.acft.id - b.acft.id;
-  });
+    // 2B. Cross-Radial (<15 NM VOR) Departure <-> Arrival Overlap Checks
+    sequencedArrivals.forEach((arrItem) => {
+      if (arrItem.acft.wptId === depItem.acft.wptId) return; // Handled in 2A
 
-  const eatMap = new Map();
-  let prevEstNorm = null;
-  let prevAcft = null;
+      const eatInfo = eatMap.get(arrItem.acft.id);
+      const arrEnter15 = arrItem.norm15 !== null ? arrItem.norm15 : arrItem.normInit;
+      const ovStart = Math.max(tDepNorm, arrEnter15);
+      const ovEnd = Math.min(tDepExit15, eatInfo.effectiveEstNorm);
 
-  sequencedArrivals.forEach((item, index) => {
-    const { acft, calc } = item;
-    const manualHold = calc.holdMins || 0;
+      // Both inside <15 NM of AYT VOR at the same time while arrival is in its 25-10 NM MSA phase
+      if (ovStart < ovEnd - 1e-6 && ovStart < arrItem.norm10 - 1e-6) {
+        const depMsa = Math.max(wptDep.msaFt, innerStackFloorForDep);
+        const depMea = wptDep.meaFt;
+        const arrMsa = arrItem.wpt.msaFt;
+        const releaseTime = Math.min(tDepExit15, arrItem.norm10);
+        const releaseStr = formatTime(
+          denormalizeTime(releaseTime, useHasHour, refHour),
+          useHasHour
+        );
+        const ovStartStr = formatTime(
+          denormalizeTime(ovStart, useHasHour, refHour),
+          useHasHour
+        );
 
-    let willDelay = false;
-    let eatNorm = null;
-    let autoHoldMins = 0;
-    let effectiveFixNorm = item.normFixBase;
-    let effectiveEstNorm = null;
-    let clearancePhaseNote = "";
+        let depRestrictedAltFt = null;
+        let arrRestrictedAltFt = null;
+        let resolutionText = "";
 
-    if (prevEstNorm !== null && item.normClearBase < prevEstNorm) {
-      // Another plane is already cleared and NOT YET ESTABLISHED!
-      willDelay = true;
-      eatNorm = prevEstNorm;
-
-      if (calc.straightIn) {
-        if (eatNorm <= item.norm10) {
-          // Cleared before reaching 10 NM, no holding needed
-          autoHoldMins = 0;
-          effectiveEstNorm = item.norm10 + manualHold;
-          const dmeAtEat = +(10 + (item.norm10 - eatNorm) * SPEED_NM_PER_MIN).toFixed(1);
-          clearancePhaseNote = `Gets ILS clearance at EAT (${formatTime(
-            denormalizeTime(eatNorm, calc.hasHour, refHour),
-            calc.hasHour
-          )}) at ${dmeAtEat} NM — No hold needed`;
-        } else {
-          // Holds at 10 NM (10 DME FIX) until EAT, then +5m to establish
-          autoHoldMins = +(eatNorm - item.norm10).toFixed(1);
-          effectiveEstNorm = eatNorm + 5 + manualHold;
-          clearancePhaseNote = `Holds ${autoHoldMins}m at 10 DME FIX until EAT (${formatTime(
-            denormalizeTime(eatNorm, calc.hasHour, refHour),
-            calc.hasHour
-          )}), then +5m to Establish`;
+        if (depMsa >= arrMsa) {
+          // Departure's required <10 NM MSA is >= Arrival's MSA!
+          // Hold Departure at depMsa until 15 NM, and restrict Arrival to depMsa + 1,000' before 15 NM
+          depRestrictedAltFt = depMsa;
+          arrRestrictedAltFt = depMsa + 1000;
+          resolutionText = `Cross-radial <15 NM VOR conflict (${ovStartStr}–${releaseStr}): ${
+            depItem.acft.callsign
+          } (${wptDep.name}) requires ${formatAlt(
+            depMsa
+          )} MSA before 10 NM. Hold ${depItem.acft.callsign} at ${formatAlt(
+            depRestrictedAltFt
+          )} until exiting 15 NM (${formatTime(
+            depItem.calc.t15,
+            depItem.calc.hasHour
+          )}) and restrict ${arrItem.acft.callsign} (${arrItem.wpt.name}) to ${formatAlt(
+            arrRestrictedAltFt
+          )} before 15 NM until ${releaseStr}.`;
+        } else if (depMea >= arrMsa && ovEnd > depItem.norm10 + 1e-6) {
+          // Between 10 NM and 15 NM, Departure climbing to depMea would hit/cross Arrival at arrMsa
+          depRestrictedAltFt = arrMsa - 1000;
+          arrRestrictedAltFt = arrMsa;
+          resolutionText = `Cross-radial <15 NM VOR conflict (${ovStartStr}–${releaseStr}): Cap ${
+            depItem.acft.callsign
+          } (${wptDep.name}) at ${formatAlt(
+            depRestrictedAltFt
+          )} (1,000' below ${arrItem.acft.callsign} at ${formatAlt(
+            arrMsa
+          )}) until exiting 15 NM at ${formatTime(
+            depItem.calc.t15,
+            depItem.calc.hasHour
+          )}, then climb to ${formatAlt(depMea)} before 25 NM.`;
         }
-      } else {
-        // Normal Approach:
-        // Compare EAT with unheld 10 DME FIX time (t10 + 4)
-        if (eatNorm <= item.normFixBase) {
-          // Like the DAMLA @ 10:08 + Straight-in @ 10:10 example!
-          // Plane gets cleared at EAT while inbound to VOR or outbound to 10 DME FIX -> NO HOLD occurs!
-          autoHoldMins = 0;
-          effectiveFixNorm = item.normFixBase + manualHold;
-          effectiveEstNorm = effectiveFixNorm + 5;
-          if (eatNorm <= item.normVor) {
-            const dmeToVor = +((item.normVor - eatNorm) * SPEED_NM_PER_MIN).toFixed(1);
-            clearancePhaseNote = `EAT is ${formatTime(
-              denormalizeTime(eatNorm, calc.hasHour, refHour),
-              calc.hasHour
-            )} (at ${
-              dmeToVor === 0 ? "AYT VOR" : `${dmeToVor} NM inbound to VOR`
-            }) — No hold occurs!`;
-          } else {
-            const dmeOut = +((eatNorm - item.normVor) * SPEED_NM_PER_MIN).toFixed(1);
-            clearancePhaseNote = `EAT is ${formatTime(
-              denormalizeTime(eatNorm, calc.hasHour, refHour),
-              calc.hasHour
-            )} (at ${dmeOut} NM outbound to 10 DME FIX) — No hold occurs!`;
-          }
-        } else {
-          // EAT > normFixBase -> Holds at 10 DME FIX until EAT, then takes 5 mins after clearance to full establish!
-          autoHoldMins = +(eatNorm - item.normFixBase).toFixed(1);
-          effectiveFixNorm = eatNorm + manualHold;
-          effectiveEstNorm = effectiveFixNorm + 5;
-          clearancePhaseNote = `Holds ${autoHoldMins}m at 10 DME FIX until EAT (${formatTime(
-            denormalizeTime(eatNorm, calc.hasHour, refHour),
-            calc.hasHour
-          )}), then +5m to full establish`;
+
+        if (depRestrictedAltFt !== null) {
+          if (!arrDepLocks.has(arrItem.acft.id)) arrDepLocks.set(arrItem.acft.id, []);
+          arrDepLocks.get(arrItem.acft.id).push({
+            type: "CROSS_RADIAL_VOR15",
+            depAcft: depItem.acft,
+            tCrossNorm: releaseTime,
+            dCross: 15,
+            arrRestrictedAltFt,
+            depRestrictedAltFt,
+            resolutionText,
+          });
+
+          if (!depArrLocks.has(depItem.acft.id)) depArrLocks.set(depItem.acft.id, []);
+          depArrLocks.get(depItem.acft.id).push({
+            type: "CROSS_RADIAL_VOR15",
+            arrAcft: arrItem.acft,
+            tCrossNorm: depItem.norm15,
+            dCross: 15,
+            arrRestrictedAltFt,
+            depRestrictedAltFt,
+            resolutionText,
+          });
+
+          depArrConflicts.push({
+            depAcft: depItem.acft,
+            arrAcft: arrItem.acft,
+            wpt: {
+              ...wptDep,
+              name: `${wptDep.name} ↔ ${arrItem.wpt.name}`,
+            },
+            tCrossNorm: ovStart,
+            displayTime: `${ovStartStr}–${releaseStr}`,
+            dCross: "<15",
+            zone: "< 15 NM (Cross-Radial VOR Zone)",
+            isValidInboundConflict: true,
+            arrRestrictedAltFt,
+            depRestrictedAltFt,
+            resolutionText,
+          });
         }
       }
-    } else {
-      // No EAT delay from preceding aircraft
-      willDelay = false;
-      eatNorm = null;
-      autoHoldMins = 0;
-      if (calc.straightIn) {
-        effectiveEstNorm = item.norm10 + manualHold;
-        clearancePhaseNote = `Cleared Straight-In ILS at 25 NM`;
-      } else {
-        effectiveFixNorm = item.normFixBase + manualHold;
-        effectiveEstNorm = effectiveFixNorm + 5;
-        clearancePhaseNote = `Cleared ILS at 10 NM`;
-      }
-    }
-
-    const eatDisplay =
-      eatNorm !== null
-        ? formatTime(denormalizeTime(eatNorm, calc.hasHour, refHour), calc.hasHour)
-        : "—";
-    const effectiveFixDisplay =
-      effectiveFixNorm !== null
-        ? formatTime(denormalizeTime(effectiveFixNorm, calc.hasHour, refHour), calc.hasHour)
-        : "—";
-    const effectiveEstDisplay = formatTime(
-      denormalizeTime(effectiveEstNorm, calc.hasHour, refHour),
-      calc.hasHour
-    );
-
-    eatMap.set(acft.id, {
-      seqNum: index + 1,
-      willDelay,
-      blockedBy: willDelay ? prevAcft : null,
-      eatNorm,
-      eatDisplay,
-      autoHoldMins,
-      effectiveFixNorm,
-      effectiveFixDisplay,
-      effectiveEstNorm,
-      effectiveEstDisplay,
-      clearancePhaseNote,
     });
-
-    prevEstNorm = effectiveEstNorm;
-    prevAcft = item;
   });
 
   // --------------------------------------------------------------------------
-  // STEP 3: VOR <15 NM Convergence & Altitude Crossing Separation Constraints
+  // STEP 3: Live Time-Step (0.2m / 1 NM) Convergence & Altitude Timeline Solver
+  // Solves arrivals sequentially #1 -> #N so every aircraft #i reacts to the
+  // exact live-solved altitude profile of all preceding aircraft #0..#(i-1)!
   // --------------------------------------------------------------------------
   const vorSepConstraints = [];
   const perAircraftVorNotes = new Map(); // acftId -> array of constraint objects
+  const solvedTimelines = new Map(); // acftId -> Array<{ tFrom, altFt, label }>
+  const arrivalProfileMeta = new Map(); // acftId -> { enrouteTargetFt, msaTargetFt, postStepMsaFt, stepDownMsaTime }
 
-  for (let i = 0; i < sequencedArrivals.length; i++) {
-    for (let j = i + 1; j < sequencedArrivals.length; j++) {
-      const first = sequencedArrivals[i];
-      const second = sequencedArrivals[j];
+  sequencedArrivals.forEach((item, index) => {
+    const { acft, wpt, calc } = item;
+    const eatInfo = eatMap.get(acft.id);
+    const depLocks = arrDepLocks.get(acft.id) || [];
+
+    const highZoneDepLock = depLocks.find((l) => l.type === "SAME_RADIAL" && l.dCross >= 25);
+    const midZoneDepLock = depLocks.find(
+      (l) =>
+        (l.type === "SAME_RADIAL" && l.dCross >= 10 && l.dCross < 25) ||
+        l.type === "CROSS_RADIAL_VOR15"
+    );
+    const lowZoneDepLock = depLocks.find((l) => l.type === "SAME_RADIAL" && l.dCross < 10);
+
+    let baseEnrouteFt = wpt.meaFt;
+    if (highZoneDepLock && highZoneDepLock.arrRestrictedAltFt > baseEnrouteFt) {
+      baseEnrouteFt = highZoneDepLock.arrRestrictedAltFt;
+    }
+
+    let baseMsaFt = wpt.msaFt;
+    if (midZoneDepLock && midZoneDepLock.arrRestrictedAltFt > baseMsaFt) {
+      baseMsaFt = midZoneDepLock.arrRestrictedAltFt;
+    }
+    if (lowZoneDepLock && lowZoneDepLock.arrRestrictedAltFt > baseMsaFt) {
+      baseMsaFt = lowZoneDepLock.arrRestrictedAltFt;
+    }
+
+    const tInit = item.normInit;
+    const t25 = item.norm25 !== null ? item.norm25 : tInit;
+    const t15 = item.norm15 !== null ? item.norm15 : tInit;
+    const t10 = item.norm10;
+
+    // Live 0.2m time-step scan against all preceding arrivals k < index
+    let requiredEnrouteFt = baseEnrouteFt;
+    let requiredMsaAtEntryFt = baseMsaFt;
+
+    for (let k = 0; k < index; k++) {
+      const first = sequencedArrivals[k];
       const firstEat = eatMap.get(first.acft.id);
-      const secondEat = eatMap.get(second.acft.id);
+      const firstTimeline = solvedTimelines.get(first.acft.id);
+      const firstMeta = arrivalProfileMeta.get(first.acft.id);
+      const w1 = first.wpt;
+      const w2 = wpt;
+      const sameWpt = w1.id === w2.id;
 
-      // Check if both aircraft are active in the approach/convergence zone around the same time:
-      // Specifically, if second reaches 25 NM before first is Established
-      const secondAt25 = second.norm25 ?? second.normInit;
-      if (secondAt25 < firstEat.effectiveEstNorm) {
-        const w1 = first.wpt;
-        const w2 = second.wpt;
-        const sameWpt = w1.id === w2.id;
+      // 1. Same-corridor Enroute (60-25 NM) live step check
+      if (sameWpt && item.norm25 !== null && first.norm25 !== null) {
+        for (let t = tInit; t < t25 - 1e-6; t = +(t + 0.2).toFixed(2)) {
+          if (t >= first.normInit && t < first.norm25 - 1e-6) {
+            const altFirst = evaluateTimelineAlt(firstTimeline, t, w1.meaFt);
+            if (altFirst + 1000 > requiredEnrouteFt) {
+              requiredEnrouteFt = altFirst + 1000;
+            }
+          }
+        }
+      }
+
+      // 2. Check <15 NM VOR / 25-10 NM convergence across live 0.2m time steps
+      const firstEnter15 = first.norm15 !== null ? first.norm15 : first.normInit;
+      const checkStart = sameWpt ? t25 : t15;
+      const checkEnd = calc.straightIn && !eatInfo.willDelay ? t25 : t10;
+
+      let maxFirstAltInOverlap = null;
+      let hasVor15Overlap = false;
+
+      for (let t = checkStart; t < checkEnd - 1e-6; t = +(t + 0.2).toFixed(2)) {
+        const firstActiveInZone = sameWpt
+          ? t >= first.normInit && t < firstEat.effectiveEstNorm - 1e-6
+          : t >= firstEnter15 - 1e-6 && t < firstEat.effectiveEstNorm - 1e-6;
+
+        if (firstActiveInZone) {
+          hasVor15Overlap = true;
+          const altFirst = evaluateTimelineAlt(firstTimeline, t, w1.msaFt);
+          if (maxFirstAltInOverlap === null || altFirst > maxFirstAltInOverlap) {
+            maxFirstAltInOverlap = altFirst;
+          }
+        }
+      }
+
+      // Also check if both aircraft are in the 25 NM approach window simultaneously
+      const activeTogetherIn25 = t25 < firstEat.effectiveEstNorm - 1e-6;
+
+      if (hasVor15Overlap || activeTogetherIn25) {
+        const firstEnrouteFt = firstMeta ? firstMeta.enrouteTargetFt : w1.meaFt;
+        const firstMsaFt = firstMeta ? firstMeta.msaTargetFt : w1.msaFt;
+
+        // If they actually overlap during #i's 15-10 NM leg (or same airway 25-10 NM leg),
+        // #i must stay >= 1,000' above #k's live altitude during that overlap!
+        let pairAssignedMsaFt = requiredMsaAtEntryFt;
+        if (maxFirstAltInOverlap !== null) {
+          pairAssignedMsaFt = Math.max(pairAssignedMsaFt, maxFirstAltInOverlap + 1000);
+        } else if (sameWpt) {
+          pairAssignedMsaFt = Math.max(pairAssignedMsaFt, firstMsaFt + 1000);
+        }
 
         let type = "";
         let firstInstruction = "";
         let secondInstruction = "";
         let summaryText = "";
-        let secondAssignedMsaFt = w2.msaFt;
         let firstMustReachBefore15 = false;
 
         if (sameWpt) {
-          // Following on the SAME airway: must keep 1,000 ft vertical separation at all times
-          type = "SAME-AIRWAY TRAIL";
-          secondAssignedMsaFt = Math.max(w2.msaFt, w1.msaFt + 1000);
-          firstInstruction = `Descend to ${formatAlt(w1.meaFt)} (MEA), then ${formatAlt(
-            w1.msaFt
-          )} (MSA) at 25 NM (reach before 15 NM).`;
+          type = "SAME-AIRWAY TRAIL (LIVE STEP)";
+          requiredEnrouteFt = Math.max(requiredEnrouteFt, firstEnrouteFt + 1000);
+          requiredMsaAtEntryFt = Math.max(requiredMsaAtEntryFt, pairAssignedMsaFt);
+          firstInstruction = `Descend to ${formatAlt(firstEnrouteFt)} (MEA), then ${formatAlt(
+            firstMsaFt
+          )} at 25 NM (reach before 15 NM).`;
           secondInstruction = `Trailing ${first.acft.callsign} on ${
             w1.name
           }: Maintain ≥1,000' above ${first.acft.callsign} (${formatAlt(
-            w2.meaFt + 1000
-          )} before 25 NM, then ${formatAlt(secondAssignedMsaFt)} at 25 NM until ${
+            requiredEnrouteFt
+          )} before 25 NM, then ${formatAlt(requiredMsaAtEntryFt)} at 25 NM until ${
             first.acft.callsign
-          } descends to 3,000').`;
-          summaryText = `Same airway (${w1.name}): ${second.acft.callsign} must stay ≥1,000' above ${first.acft.callsign} (${formatAlt(
-            secondAssignedMsaFt
+          } descends below).`;
+          summaryText = `Same airway (${w1.name}): ${acft.callsign} is kept ≥1,000' above ${
+            first.acft.callsign
+          } at every 0.2m step (${formatAlt(requiredEnrouteFt)} enroute → ${formatAlt(
+            requiredMsaAtEntryFt
           )} at 25 NM).`;
-        } else if (w1.meaFt >= w2.meaFt && w1.msaFt < w2.msaFt) {
-          // ALTITUDE CROSSING CASE! (Exact DAMLA #1 [130 -> 9000'] vs KUMRU #2 [120 -> 10000'] case!)
+        } else if (firstEnrouteFt >= requiredEnrouteFt && firstMsaFt < pairAssignedMsaFt) {
+          // Altitude Crossing Case (e.g. DAMLA FL130 -> 9,000' ahead of KUMRU FL120 -> 10,000')
           type = "ALTITUDE CROSSING (<15 NM)";
           firstMustReachBefore15 = true;
-          firstInstruction = `⚠️ CROSSING ALTITUDES w/ ${second.acft.callsign}: At 25 NM, descend to ${formatAlt(
-            w1.msaFt
-          )} — MUST REACH & MAINTAIN ${formatAlt(w1.msaFt)} BEFORE 15 NM (${formatTime(
+          requiredMsaAtEntryFt = Math.max(requiredMsaAtEntryFt, pairAssignedMsaFt);
+          firstInstruction = `⚠️ CROSSING ALTITUDES w/ ${acft.callsign}: At 25 NM, descend to ${formatAlt(
+            firstMsaFt
+          )} — MUST REACH & MAINTAIN ${formatAlt(firstMsaFt)} BEFORE 15 NM (${formatTime(
             first.calc.t15,
             first.calc.hasHour
           )})!`;
           secondInstruction = `At 25 NM, descend to ${formatAlt(
-            w2.msaFt
-          )} (MSA) and maintain ${formatAlt(w2.msaFt)} before 15 NM (1,000' above ${
+            requiredMsaAtEntryFt
+          )} and maintain ${formatAlt(requiredMsaAtEntryFt)} before 15 NM (≥1,000' above ${
             first.acft.callsign
-          } at ${formatAlt(w1.msaFt)}).`;
-          summaryText = `${first.acft.callsign} (${w1.name}: MEA ${formatAltShort(
-            w1.meaFt
-          )} → MSA ${formatAltShort(w1.msaFt)}) is #${firstEat.seqNum} ahead of ${
-            second.acft.callsign
-          } (${w2.name}: MEA ${formatAltShort(w2.meaFt)} → MSA ${formatAltShort(
-            w2.msaFt
+          } at ${formatAlt(firstMsaFt)}).`;
+          summaryText = `${first.acft.callsign} (${w1.name}: ${formatAltShort(
+            firstEnrouteFt
+          )} → ${formatAltShort(firstMsaFt)}) is #${firstEat.seqNum} ahead of ${
+            acft.callsign
+          } (${w2.name}: ${formatAltShort(requiredEnrouteFt)} → ${formatAltShort(
+            requiredMsaAtEntryFt
           )}). Because their altitudes cross, issue constraint to ${
             first.acft.callsign
-          }: "Maintain ${formatAlt(w1.msaFt)} BEFORE 15 NM"!`;
-        } else if (w1.msaFt === w2.msaFt) {
-          // Equal MSA on converging radials (e.g. DAMLA 9000' & KONAK 9000', or KUMRU 10000' & BRONZ 10000')
-          type = "EQUAL MSA CONVERGENCE (<15 NM)";
-          firstMustReachBefore15 = true;
-          secondAssignedMsaFt = w1.msaFt + 1000;
-          firstInstruction = `At 25 NM, descend to ${formatAlt(
-            w1.msaFt
-          )} (MSA) — reach before 15 NM.`;
-          secondInstruction = `⚠️ VOR <15 NM SEP w/ ${first.acft.callsign}: Both waypoints have ${formatAlt(
-            w1.msaFt
-          )} MSA. At 25 NM, restrict descent to ${formatAlt(
-            secondAssignedMsaFt
-          )} before 15 NM (1,000' above ${first.acft.callsign}); descend to ${formatAlt(
-            w2.msaFt
-          )} / 4,000' after ${first.acft.callsign} descends to 3,000'.`;
-          summaryText = `${first.acft.callsign} (${w1.name}) & ${second.acft.callsign} (${
+          }: "Maintain ${formatAlt(firstMsaFt)} BEFORE 15 NM"!`;
+
+          // Ensure the lead aircraft's plan also highlights this crossing requirement
+          if (!perAircraftVorNotes.has(first.acft.id)) perAircraftVorNotes.set(first.acft.id, []);
+          perAircraftVorNotes.get(first.acft.id).push({
+            role: "lead",
+            other: acft,
+            text: firstInstruction,
+            type,
+          });
+        } else if (
+          maxFirstAltInOverlap !== null &&
+          maxFirstAltInOverlap + 1000 > w2.msaFt &&
+          maxFirstAltInOverlap <= 6000 &&
+          w2.msaFt === 3000
+        ) {
+          // Low-MSA arrival (MANAV / DERYA, MSA 3,000') entering <15 NM while preceding traffic is in the 3,000'/4,000' stack!
+          type = "INNER STACK PROTECTION (<15 NM)";
+          requiredMsaAtEntryFt = Math.max(requiredMsaAtEntryFt, pairAssignedMsaFt);
+          firstInstruction = `Active on approach/hold inside 15 NM at ${formatAlt(
+            maxFirstAltInOverlap
+          )}.`;
+          secondInstruction = `⚠️ VOR <15 NM STACK SEP w/ ${first.acft.callsign}: Even though ${
             w2.name
-          }) share ${formatAlt(w1.msaFt)} MSA. Hold ${second.acft.callsign} at ${formatAlt(
-            secondAssignedMsaFt
-          )} before 15 NM for 1,000' VOR separation.`;
-        } else if (w1.msaFt > w2.msaFt) {
-          // #1 has higher MSA than #2 (e.g. KUMRU #1 [10,000'] ahead of DAMLA #2 [9,000'])
-          type = "INVERTED MSA SEQUENCE (<15 NM)";
-          secondAssignedMsaFt = w1.msaFt + 1000;
-          firstInstruction = `At 25 NM, descend to ${formatAlt(
-            w1.msaFt
-          )} (MSA) before 15 NM, then 3,000' at 10 NM ILS clearance.`;
-          secondInstruction = `⚠️ #${firstEat.seqNum} ${first.acft.callsign} has higher MSA (${formatAlt(
-            w1.msaFt
-          )}). Keep ${second.acft.callsign} at ${formatAlt(
-            secondAssignedMsaFt
-          )} before 15 NM so ${first.acft.callsign} stays below; descend ${
-            second.acft.callsign
-          } to ${formatAlt(w2.msaFt)} once ${first.acft.callsign} is cleared ILS to 3,000'.`;
-          summaryText = `#${firstEat.seqNum} ${first.acft.callsign} (${w1.name} MSA ${formatAlt(
-            w1.msaFt
-          )}) is ahead of #${secondEat.seqNum} ${second.acft.callsign} (${w2.name} MSA ${formatAlt(
+          } MSA is ${formatAlt(w2.msaFt)}, ${
+            first.acft.callsign
+          } occupies ${formatAlt(
+            maxFirstAltInOverlap
+          )} inside 15 NM. Restrict ${acft.callsign} at 25 NM to ${formatAlt(
+            requiredMsaAtEntryFt
+          )} before 15 NM!`;
+          summaryText = `${acft.callsign} (${w2.name} MSA ${formatAlt(
             w2.msaFt
-          )}). Restrict ${second.acft.callsign} to ${formatAlt(
-            secondAssignedMsaFt
-          )} before 15 NM until ${first.acft.callsign} descends to 3,000'.`;
+          )}) enters <15 NM while #${firstEat.seqNum} ${
+            first.acft.callsign
+          } is at ${formatAlt(maxFirstAltInOverlap)}. Hold ${acft.callsign} at ${formatAlt(
+            requiredMsaAtEntryFt
+          )} before 15 NM.`;
+        } else if (maxFirstAltInOverlap !== null && maxFirstAltInOverlap === w2.msaFt) {
+          // Equal MSA (or elevated MSA matching #i's base MSA!) inside <15 NM
+          type = "EQUAL ALT CONVERGENCE (<15 NM)";
+          firstMustReachBefore15 = true;
+          requiredMsaAtEntryFt = Math.max(requiredMsaAtEntryFt, pairAssignedMsaFt);
+          firstInstruction = `At 25 NM, descend to ${formatAlt(
+            firstMsaFt
+          )} — reach before 15 NM.`;
+          secondInstruction = `⚠️ VOR <15 NM SEP w/ ${first.acft.callsign} (at ${formatAlt(
+            maxFirstAltInOverlap
+          )}): At 25 NM, restrict descent to ${formatAlt(
+            requiredMsaAtEntryFt
+          )} before 15 NM (1,000' above ${first.acft.callsign}).`;
+          summaryText = `Inside <15 NM, #${firstEat.seqNum} ${first.acft.callsign} (${
+            w1.name
+          }) occupies ${formatAlt(maxFirstAltInOverlap)}. Restrict #${eatInfo.seqNum} ${
+            acft.callsign
+          } (${w2.name}) to ${formatAlt(requiredMsaAtEntryFt)} before 15 NM for 1,000' separation.`;
+        } else if (maxFirstAltInOverlap !== null && maxFirstAltInOverlap > w2.msaFt) {
+          // Inverted MSA (or elevated preceding aircraft higher than #i's MSA) inside <15 NM
+          type = "INVERTED MSA SEQUENCE (<15 NM)";
+          requiredMsaAtEntryFt = Math.max(requiredMsaAtEntryFt, pairAssignedMsaFt);
+          firstInstruction = `At 25 NM, descend to ${formatAlt(
+            firstMsaFt
+          )} before 15 NM, then ${formatAlt(
+            firstEat.willDelay ? firstEat.initialHoldAltFt : 3000
+          )} at 10 NM.`;
+          secondInstruction = `⚠️ #${firstEat.seqNum} ${
+            first.acft.callsign
+          } is at ${formatAlt(maxFirstAltInOverlap)} inside 15 NM. Keep ${
+            acft.callsign
+          } at ${formatAlt(
+            requiredMsaAtEntryFt
+          )} before 15 NM so ${first.acft.callsign} stays below; descend to ${formatAlt(
+            w2.msaFt
+          )} once ${first.acft.callsign} descends at 10 NM.`;
+          summaryText = `#${firstEat.seqNum} ${first.acft.callsign} (${
+            w1.name
+          } @ ${formatAlt(maxFirstAltInOverlap)}) is ahead of #${eatInfo.seqNum} ${
+            acft.callsign
+          } (${w2.name} MSA ${formatAlt(w2.msaFt)}) inside <15 NM. Restrict ${
+            acft.callsign
+          } to ${formatAlt(requiredMsaAtEntryFt)} before 15 NM.`;
         } else {
-          // Naturally separated (w1.msaFt < w2.msaFt and w1.meaFt <= w2.meaFt)
           type = "NATURAL VERTICAL SEP (<15 NM)";
           firstMustReachBefore15 = true;
           firstInstruction = `At 25 NM, descend to ${formatAlt(
-            w1.msaFt
+            firstMsaFt
           )} (MSA) before 15 NM.`;
           secondInstruction = `At 25 NM, descend to ${formatAlt(
-            w2.msaFt
-          )} (MSA) before 15 NM (naturally ≥1,000' above ${first.acft.callsign} at ${formatAlt(
-            w1.msaFt
-          )}).`;
-          summaryText = `${first.acft.callsign} (${formatAlt(
-            w1.msaFt
-          )}) and ${second.acft.callsign} (${formatAlt(
-            w2.msaFt
-          )}) are naturally separated by ≥1,000' once ${first.acft.callsign} reaches ${formatAlt(
-            w1.msaFt
-          )} before 15 NM.`;
+            requiredMsaAtEntryFt
+          )} before 15 NM (naturally ≥1,000' above ${first.acft.callsign}).`;
+          summaryText = `${first.acft.callsign} and ${
+            acft.callsign
+          } maintain ≥1,000' vertical separation across all <15 NM time steps.`;
         }
 
-        const constraintObj = {
+        vorSepConstraints.push({
           first,
-          second,
+          second: item,
           type,
           firstInstruction,
           secondInstruction,
           summaryText,
-          secondAssignedMsaFt,
+          secondAssignedMsaFt: requiredMsaAtEntryFt,
           firstMustReachBefore15,
-        };
-
-        vorSepConstraints.push(constraintObj);
-
-        if (!perAircraftVorNotes.has(first.acft.id)) perAircraftVorNotes.set(first.acft.id, []);
-        perAircraftVorNotes.get(first.acft.id).push({
-          role: "lead",
-          other: second.acft,
-          text: firstInstruction,
-          type,
         });
 
-        if (!perAircraftVorNotes.has(second.acft.id)) perAircraftVorNotes.set(second.acft.id, []);
-        perAircraftVorNotes.get(second.acft.id).push({
+        if (!perAircraftVorNotes.has(acft.id)) perAircraftVorNotes.set(acft.id, []);
+        perAircraftVorNotes.get(acft.id).push({
           role: "trail",
           other: first.acft,
           text: secondInstruction,
-          assignedMsaFt: secondAssignedMsaFt,
+          assignedMsaFt: requiredMsaAtEntryFt,
           type,
         });
       }
     }
-  }
+
+    // Ensure arrival altitude profile never climbs at 25 NM (enroute >= msaTarget)
+    requiredEnrouteFt = Math.max(requiredEnrouteFt, requiredMsaAtEntryFt);
+    const initFloorFt = Math.max(calc.initAltFt, requiredEnrouteFt);
+
+    // Build exact piecewise altitude timeline for Arrival #i
+    const timeline = [];
+    timeline.push({ tFrom: -Infinity, altFt: initFloorFt, label: "INIT" });
+
+    if (highZoneDepLock && highZoneDepLock.tCrossNorm > tInit && highZoneDepLock.tCrossNorm < t25) {
+      timeline.push({
+        tFrom: tInit,
+        altFt: Math.max(requiredEnrouteFt, highZoneDepLock.arrRestrictedAltFt),
+        label: "DEP_LOCK_HIGH",
+      });
+      timeline.push({
+        tFrom: highZoneDepLock.tCrossNorm,
+        altFt: Math.max(wpt.meaFt, requiredMsaAtEntryFt),
+        label: "MEA",
+      });
+    } else {
+      timeline.push({ tFrom: tInit, altFt: requiredEnrouteFt, label: "MEA" });
+    }
+
+    if (calc.straightIn) {
+      if (!eatInfo.willDelay) {
+        if (midZoneDepLock && midZoneDepLock.tCrossNorm > t25) {
+          timeline.push({
+            tFrom: t25,
+            altFt: requiredMsaAtEntryFt,
+            label: "DEP_LOCK_MID",
+          });
+          timeline.push({
+            tFrom: midZoneDepLock.tCrossNorm,
+            altFt: 3000,
+            label: "ILS_3000",
+          });
+        } else {
+          timeline.push({ tFrom: t25, altFt: 3000, label: "ILS_3000" });
+        }
+      } else {
+        // Delayed Straight-In
+        const pre10Alt = Math.max(requiredMsaAtEntryFt, eatInfo.initialHoldAltFt);
+        timeline.push({ tFrom: t25, altFt: pre10Alt, label: "MSA_DELAY" });
+        if (eatInfo.eatNorm > t10 + 1e-6) {
+          timeline.push({
+            tFrom: t10,
+            altFt: eatInfo.initialHoldAltFt,
+            label: "HOLD_STACK",
+          });
+          eatInfo.holdStepDowns.forEach((sd) => {
+            timeline.push({
+              tFrom: sd.timeNorm,
+              altFt: sd.altFt,
+              label: "HOLD_STEPDOWN",
+            });
+          });
+        }
+        timeline.push({
+          tFrom: eatInfo.eatNorm,
+          altFt: 3000,
+          label: "ILS_3000",
+        });
+      }
+    } else {
+      // Normal Arrival: 25 NM -> 10 NM -> Hold Stack / 3,000'
+      timeline.push({ tFrom: t25, altFt: requiredMsaAtEntryFt, label: "MSA" });
+      if (midZoneDepLock && midZoneDepLock.tCrossNorm > t25 && midZoneDepLock.tCrossNorm < t10) {
+        timeline.push({
+          tFrom: midZoneDepLock.tCrossNorm,
+          altFt: Math.max(wpt.msaFt, eatInfo.willDelay ? eatInfo.initialHoldAltFt : 3000),
+          label: "MSA_POST_DEP",
+        });
+      }
+
+      if (!eatInfo.willDelay) {
+        if (lowZoneDepLock && lowZoneDepLock.tCrossNorm > t10) {
+          timeline.push({
+            tFrom: t10,
+            altFt: lowZoneDepLock.arrRestrictedAltFt,
+            label: "DEP_LOCK_LOW",
+          });
+          timeline.push({
+            tFrom: lowZoneDepLock.tCrossNorm,
+            altFt: 3000,
+            label: "ILS_3000",
+          });
+        } else {
+          timeline.push({ tFrom: t10, altFt: 3000, label: "ILS_3000" });
+        }
+      } else {
+        timeline.push({
+          tFrom: t10,
+          altFt: eatInfo.initialHoldAltFt,
+          label: "HOLD_STACK",
+        });
+        eatInfo.holdStepDowns.forEach((sd) => {
+          timeline.push({
+            tFrom: sd.timeNorm,
+            altFt: sd.altFt,
+            label: "HOLD_STEPDOWN",
+          });
+        });
+        timeline.push({
+          tFrom: eatInfo.eatNorm,
+          altFt: 3000,
+          label: "ILS_3000",
+        });
+      }
+    }
+
+    timeline.sort((a, b) => a.tFrom - b.tFrom);
+    solvedTimelines.set(acft.id, timeline);
+    arrivalProfileMeta.set(acft.id, {
+      enrouteTargetFt: requiredEnrouteFt,
+      msaTargetFt: requiredMsaAtEntryFt,
+    });
+  });
+
+  // Build Departure Altitude Timelines (including same-corridor & <15 NM locks)
+  computedDepartures.forEach((depItem, depIdx) => {
+    const { acft, wpt, calc } = depItem;
+    const locks = depArrLocks.get(acft.id) || [];
+    const stackLock = locks.find((l) => l.type === "STACK_FLOOR");
+    const radialOrVorLock = locks.find(
+      (l) => l.type === "SAME_RADIAL" || l.type === "CROSS_RADIAL_VOR15"
+    );
+
+    let initial10Ft = stackLock
+      ? Math.max(wpt.msaFt, stackLock.depMinInitialAltFt)
+      : wpt.msaFt;
+    let mid25Ft = Math.max(initial10Ft, wpt.meaFt);
+    let finalFt = Math.max(mid25Ft, calc.reqAltFt);
+
+    // Check against earlier departures on the same corridor or within <15 NM VOR
+    for (let k = 0; k < depIdx; k++) {
+      const prevDep = computedDepartures[k];
+      if (Math.abs(depItem.normDep - prevDep.normDep) < 3) {
+        const prevTl = solvedTimelines.get(prevDep.acft.id);
+        const prevAltAtDep = evaluateTimelineAlt(prevTl, depItem.normDep + 0.5, prevDep.wpt.msaFt);
+        if (Math.abs(initial10Ft - prevAltAtDep) < 1000) {
+          initial10Ft = prevAltAtDep + 1000;
+          mid25Ft = Math.max(mid25Ft, initial10Ft);
+          finalFt = Math.max(finalFt, mid25Ft);
+        }
+      }
+    }
+
+    const timeline = [{ tFrom: -Infinity, altFt: 0, label: "GND" }];
+
+    if (radialOrVorLock) {
+      const cappedAlt = radialOrVorLock.depRestrictedAltFt;
+      const tRelease = radialOrVorLock.tCrossNorm;
+      timeline.push({
+        tFrom: depItem.normDep,
+        altFt: Math.min(initial10Ft, cappedAlt),
+        label: "DEP_LOCKED",
+      });
+      if (depItem.norm10 < tRelease) {
+        timeline.push({
+          tFrom: depItem.norm10,
+          altFt: Math.min(mid25Ft, cappedAlt),
+          label: "DEP_LOCKED_10",
+        });
+      }
+      timeline.push({
+        tFrom: tRelease,
+        altFt: tRelease < depItem.norm25 ? mid25Ft : finalFt,
+        label: "DEP_RELEASED",
+      });
+      if (tRelease < depItem.norm25) {
+        timeline.push({
+          tFrom: depItem.norm25,
+          altFt: finalFt,
+          label: "DEP_FINAL",
+        });
+      }
+    } else {
+      timeline.push({ tFrom: depItem.normDep, altFt: initial10Ft, label: "DEP_MSA" });
+      timeline.push({ tFrom: depItem.norm10, altFt: mid25Ft, label: "DEP_MEA" });
+      timeline.push({ tFrom: depItem.norm25, altFt: finalFt, label: "DEP_REQ" });
+    }
+
+    timeline.sort((a, b) => a.tFrom - b.tFrom);
+    solvedTimelines.set(acft.id, timeline);
+  });
 
   // --------------------------------------------------------------------------
-  // STEP 4: Build Step-by-Step Solved Clearance Plan for Each Aircraft
+  // STEP 4: Build Step-by-Step Solved Clearance Plan Cards for Each Aircraft
   // --------------------------------------------------------------------------
   const aircraftPlans = new Map();
 
   sequencedArrivals.forEach((item) => {
     const { acft, wpt, calc } = item;
     const eatInfo = eatMap.get(acft.id);
+    const meta = arrivalProfileMeta.get(acft.id);
     const depLocks = arrDepLocks.get(acft.id) || [];
     const vorNotes = perAircraftVorNotes.get(acft.id) || [];
     const steps = [];
 
-    // 1. Initial Contact (60-50 NM) -> Descent to MEA (or restricted by Dep conflict >=25 NM)
-    const highZoneDepLock = depLocks.find((l) => l.dCross >= 25);
-    const midZoneDepLock = depLocks.find((l) => l.dCross >= 10 && l.dCross < 25);
+    const enrouteTargetFt = meta ? meta.enrouteTargetFt : wpt.meaFt;
+    const msaTargetFt = meta ? meta.msaTargetFt : wpt.msaFt;
 
-    let enrouteTargetFt = wpt.meaFt;
-    if (highZoneDepLock && highZoneDepLock.arrRestrictedAltFt > enrouteTargetFt) {
-      enrouteTargetFt = highZoneDepLock.arrRestrictedAltFt;
+    const highZoneDepLock = depLocks.find((l) => l.type === "SAME_RADIAL" && l.dCross >= 25);
+    const midZoneDepLock = depLocks.find(
+      (l) =>
+        (l.type === "SAME_RADIAL" && l.dCross >= 10 && l.dCross < 25) ||
+        l.type === "CROSS_RADIAL_VOR15"
+    );
+
+    // 1. Initial Contact (60-50 NM)
+    if (highZoneDepLock && highZoneDepLock.arrRestrictedAltFt >= enrouteTargetFt) {
       steps.push({
         timeNorm: item.normInit,
         timeStr: formatTime(calc.tInit, calc.hasHour),
@@ -885,7 +1422,20 @@ function solveScenario(aircraftList, activeRwy) {
         severity: "ok",
         text: `Passed outbound <strong>${highZoneDepLock.depAcft.callsign}</strong> at ${
           highZoneDepLock.dCross
-        } NM → Descend to <strong>${formatAlt(wpt.meaFt)} (MEA)</strong>.`,
+        } NM → Descend to <strong>${formatAlt(
+          Math.max(wpt.meaFt, msaTargetFt)
+        )}</strong>.`,
+      });
+    } else if (enrouteTargetFt > wpt.meaFt) {
+      steps.push({
+        timeNorm: item.normInit,
+        timeStr: formatTime(calc.tInit, calc.hasHour),
+        severity: "warn",
+        text: `Reports ${calc.dist} NM ${wpt.name} (${formatAlt(
+          calc.initAltFt
+        )}) → Descend to <strong>${formatAlt(
+          enrouteTargetFt
+        )}</strong> (held above ${formatAlt(wpt.meaFt)} MEA for vertical separation), report 25 NM.`,
       });
     } else {
       steps.push({
@@ -898,21 +1448,17 @@ function solveScenario(aircraftList, activeRwy) {
       });
     }
 
-    // 2. At 25 NM -> MSA & 15 NM VOR Constraints (or Straight-In ILS Clearance)
-    const trailVorConstraint = vorNotes.find(
+    // 2. At 25 NM -> MSA & <15 NM VOR Constraints (or Straight-In ILS Clearance)
+    const trailVorConstraints = vorNotes.filter(
       (n) => n.role === "trail" && n.assignedMsaFt && n.assignedMsaFt > wpt.msaFt
     );
+    const highestTrailConstraint =
+      trailVorConstraints.length > 0
+        ? trailVorConstraints.reduce((a, b) => (b.assignedMsaFt >= a.assignedMsaFt ? b : a))
+        : null;
     const leadCrossingConstraint = vorNotes.find(
       (n) => n.role === "lead" && n.type.includes("CROSSING")
     );
-
-    let msaTargetFt = wpt.msaFt;
-    if (trailVorConstraint) {
-      msaTargetFt = Math.max(msaTargetFt, trailVorConstraint.assignedMsaFt);
-    }
-    if (midZoneDepLock && midZoneDepLock.arrRestrictedAltFt > msaTargetFt) {
-      msaTargetFt = midZoneDepLock.arrRestrictedAltFt;
-    }
 
     if (calc.t25 !== null) {
       if (calc.straightIn) {
@@ -924,6 +1470,7 @@ function solveScenario(aircraftList, activeRwy) {
             text: `At 25 NM ${wpt.name} → <strong>Clear Straight-In ILS RWY ${activeRwy}</strong>, descend to <strong>3,000'</strong>, report Established at 10 NM.`,
           });
         } else {
+          const hold25Alt = Math.max(msaTargetFt, eatInfo.initialHoldAltFt);
           steps.push({
             timeNorm: item.norm25,
             timeStr: formatTime(calc.t25, calc.hasHour),
@@ -932,13 +1479,10 @@ function solveScenario(aircraftList, activeRwy) {
               eatInfo.blockedBy.acft.callsign
             }</strong>. Issue <strong>EAT ${
               eatInfo.eatDisplay
-            }</strong>, descend to <strong>${formatAlt(
-               Math.max(msaTargetFt, 4000)
-            )}</strong>.`,
+            }</strong>, descend to <strong>${formatAlt(hold25Alt)}</strong>.`,
           });
         }
       } else {
-        // Normal Approach at 25 NM
         let constraintNote = "";
         let sev = "normal";
         if (leadCrossingConstraint) {
@@ -948,20 +1492,18 @@ function solveScenario(aircraftList, activeRwy) {
           )} BEFORE 15 NM (${formatTime(calc.t15, calc.hasHour)})</strong> (crossing <strong>${
             leadCrossingConstraint.other.callsign
           }</strong>)!`;
-        } else if (trailVorConstraint) {
+        } else if (highestTrailConstraint) {
           sev = "warn";
           constraintNote = ` — <strong>RESTRICT to ${formatAlt(
             msaTargetFt
-          )} before 15 NM</strong> (1,000' above <strong>${
-            trailVorConstraint.other.callsign
-          }</strong>).`;
+          )} before 15 NM</strong> (≥1,000' above <strong>${
+            highestTrailConstraint.other.callsign
+          }</strong> inside 15 NM).`;
         } else if (midZoneDepLock) {
           sev = "crit";
           constraintNote = ` — <strong>HOLD AT ${formatAlt(
             msaTargetFt
-          )} until passing outbound ${midZoneDepLock.depAcft.callsign} at ${
-            midZoneDepLock.dCross
-          } NM</strong>.`;
+          )} until clear of outbound ${midZoneDepLock.depAcft.callsign}</strong>.`;
         } else {
           constraintNote = ` (reach before 15 NM @ ${formatTime(calc.t15, calc.hasHour)}).`;
         }
@@ -977,7 +1519,7 @@ function solveScenario(aircraftList, activeRwy) {
       }
     }
 
-    if (midZoneDepLock) {
+    if (midZoneDepLock && midZoneDepLock.tCrossNorm < item.norm10) {
       steps.push({
         timeNorm: midZoneDepLock.tCrossNorm,
         timeStr: formatTime(
@@ -985,13 +1527,13 @@ function solveScenario(aircraftList, activeRwy) {
           calc.hasHour
         ),
         severity: "ok",
-        text: `Passed outbound <strong>${midZoneDepLock.depAcft.callsign}</strong> at ${
-          midZoneDepLock.dCross
-        } NM → Descend to <strong>${formatAlt(wpt.msaFt)} (MSA)</strong>.`,
+        text: `Clear of outbound <strong>${midZoneDepLock.depAcft.callsign}</strong> → Descend to <strong>${formatAlt(
+          wpt.msaFt
+        )} (MSA)</strong>.`,
       });
     }
 
-    // 3. At 10 NM & EAT / ILS Clearance
+    // 3. At 10 NM, Multi-Aircraft Hold Stack Step-Downs & EAT / ILS Clearance
     if (!calc.straightIn) {
       if (!eatInfo.willDelay) {
         steps.push({
@@ -1004,7 +1546,14 @@ function solveScenario(aircraftList, activeRwy) {
           )} → 10 DME FIX @ ${eatInfo.effectiveFixDisplay}).`,
         });
       } else {
-        // Delayed: receives EAT at 10 NM
+        const stackLevelNum = Math.round((eatInfo.initialHoldAltFt - 2000) / 1000);
+        const stackDetail =
+          eatInfo.initialHoldAltFt > 4000
+            ? `Stack #${stackLevelNum} (${formatAlt(
+                eatInfo.initialHoldAltFt
+              )}, ≥1,000' above preceding hold/approach stack)`
+            : `1,000' above approach traffic`;
+
         steps.push({
           timeNorm: item.norm10,
           timeStr: formatTime(calc.t10, calc.hasHour),
@@ -1013,10 +1562,28 @@ function solveScenario(aircraftList, activeRwy) {
             eatInfo.blockedBy.acft.callsign
           }</strong> not yet established. Issue <strong>EAT ${
             eatInfo.eatDisplay
-          }</strong>, descend to <strong>4,000'</strong> (1,000' above approach traffic) and proceed via AYT VOR (${formatTime(
+          }</strong>, descend to <strong>${formatAlt(
+            eatInfo.initialHoldAltFt
+          )}</strong> (${stackDetail}) and proceed via AYT VOR (${formatTime(
             calc.tVor,
             calc.hasHour
           )}) to 10 DME FIX.`,
+        });
+
+        // Add any intermediate 1,000' holding stack step-downs
+        eatInfo.holdStepDowns.forEach((sd) => {
+          steps.push({
+            timeNorm: sd.timeNorm,
+            timeStr: sd.timeStr,
+            severity: "warn",
+            text: `<strong>Hold Stack Step-Down</strong> (${
+              sd.establishedAcft.callsign
+            } Established; ${
+              sd.nextClearedAcft.callsign
+            } descending to 3,000') → Descend ${
+              acft.callsign
+            } from ${formatAlt(sd.prevAltFt)} to <strong>${formatAlt(sd.altFt)}</strong>.`,
+          });
         });
 
         steps.push({
@@ -1033,6 +1600,28 @@ function solveScenario(aircraftList, activeRwy) {
         });
       }
     } else if (eatInfo.willDelay) {
+      if (eatInfo.eatNorm > item.norm10 + 1e-6) {
+        steps.push({
+          timeNorm: item.norm10,
+          timeStr: formatTime(calc.t10, calc.hasHour),
+          severity: "warn",
+          text: `At 10 NM (${wpt.name}) → Enter hold at <strong>${formatAlt(
+            eatInfo.initialHoldAltFt
+          )}</strong> until EAT ${eatInfo.eatDisplay}.`,
+        });
+        eatInfo.holdStepDowns.forEach((sd) => {
+          steps.push({
+            timeNorm: sd.timeNorm,
+            timeStr: sd.timeStr,
+            severity: "warn",
+            text: `<strong>Hold Stack Step-Down</strong> (${
+              sd.establishedAcft.callsign
+            } Established) → Descend from ${formatAlt(sd.prevAltFt)} to <strong>${formatAlt(
+              sd.altFt
+            )}</strong>.`,
+          });
+        });
+      }
       steps.push({
         timeNorm: eatInfo.eatNorm,
         timeStr: eatInfo.eatDisplay,
@@ -1056,6 +1645,7 @@ function solveScenario(aircraftList, activeRwy) {
       eatInfo,
       enrouteTargetFt,
       msaTargetFt,
+      altTimeline: solvedTimelines.get(acft.id),
       steps,
     });
   });
@@ -1064,10 +1654,22 @@ function solveScenario(aircraftList, activeRwy) {
   computedDepartures.forEach((depItem) => {
     const { acft, wpt, calc } = depItem;
     const locks = depArrLocks.get(acft.id) || [];
+    const stackLock = locks.find((l) => l.type === "STACK_FLOOR");
+    const radialOrVorLock = locks.find(
+      (l) => l.type === "SAME_RADIAL" || l.type === "CROSS_RADIAL_VOR15"
+    );
     const steps = [];
 
-    if (locks.length > 0) {
-      const firstLock = locks[0];
+    if (radialOrVorLock) {
+      const lockLabel =
+        radialOrVorLock.type === "CROSS_RADIAL_VOR15"
+          ? `15 NM VOR separation w/ <strong>${radialOrVorLock.arrAcft.callsign}</strong>`
+          : `inbound <strong>${radialOrVorLock.arrAcft.callsign}</strong> (cross at <strong>${
+              radialOrVorLock.dCross
+            } NM @ ${formatTime(
+              denormalizeTime(radialOrVorLock.tCrossNorm, calc.hasHour, refHour),
+              calc.hasHour
+            )}</strong>)`;
       steps.push({
         timeNorm: depItem.normDep,
         timeStr: formatTime(calc.tDep, calc.hasHour),
@@ -1078,29 +1680,41 @@ function solveScenario(aircraftList, activeRwy) {
           calc.t10,
           calc.hasHour
         )})</strong>. Stop climb at <strong>${formatAlt(
-          firstLock.depRestrictedAltFt
-        )}</strong> due to inbound <strong>${
-          firstLock.arrAcft.callsign
-        }</strong> (cross at <strong>${firstLock.dCross} NM @ ${formatTime(
-          denormalizeTime(firstLock.tCrossNorm, calc.hasHour, refHour),
-          calc.hasHour
-        )}</strong>).`,
+          radialOrVorLock.depRestrictedAltFt
+        )}</strong> due to ${lockLabel}.`,
       });
       steps.push({
-        timeNorm: firstLock.tCrossNorm,
+        timeNorm: radialOrVorLock.tCrossNorm,
         timeStr: formatTime(
-          denormalizeTime(firstLock.tCrossNorm, calc.hasHour, refHour),
+          denormalizeTime(radialOrVorLock.tCrossNorm, calc.hasHour, refHour),
           calc.hasHour
         ),
         severity: "ok",
-        text: `Passed inbound <strong>${firstLock.arrAcft.callsign}</strong> at ${
-          firstLock.dCross
-        } NM → Climb to <strong>${formatAlt(
+        text: `Clear of conflict w/ <strong>${
+          radialOrVorLock.arrAcft.callsign
+        }</strong> → Climb to <strong>${formatAlt(
           Math.max(wpt.meaFt, calc.reqAltFt)
         )}</strong> (ensure ≥${formatAlt(wpt.meaFt)} MEA before 25 NM @ ${formatTime(
           calc.t25,
           calc.hasHour
         )}).`,
+      });
+    } else if (stackLock) {
+      steps.push({
+        timeNorm: depItem.normDep,
+        timeStr: formatTime(calc.tDep, calc.hasHour),
+        severity: "warn",
+        text: `Departs 0 NM toward ${wpt.name} (${wpt.entryWpt}) → Climb directly to <strong>${formatAlt(
+          stackLock.depMinInitialAltFt
+        )} before 10 NM (${formatTime(
+          calc.t10,
+          calc.hasHour
+        )})</strong> (≥1,000' above active inner approach stack), <strong>${formatAlt(
+          wpt.meaFt
+        )} (MEA) before 25 NM (${formatTime(
+          calc.t25,
+          calc.hasHour
+        )})</strong>, then <strong>${formatAlt(calc.reqAltFt)}</strong>.`,
       });
     } else {
       steps.push({
@@ -1125,9 +1739,78 @@ function solveScenario(aircraftList, activeRwy) {
       seqNum: "DEP",
       acft,
       wpt,
+      altTimeline: solvedTimelines.get(acft.id),
       steps,
     });
   });
+
+  // --------------------------------------------------------------------------
+  // STEP 5: Live Time-Step Verification Sweep (dt = 0.2m = 1 NM)
+  // Audits every 0.2-minute step from scenario start to end across all pairs
+  // --------------------------------------------------------------------------
+  const allItems = [...sequencedArrivals, ...computedDepartures];
+  let totalStepsChecked = 0;
+  let totalPairChecks = 0;
+  let maxSimultaneousInVor15 = 0;
+
+  if (allItems.length > 0) {
+    const simStart = Math.min(
+      ...allItems.map((it) => (it.acft.type === "DEP" ? it.normDep : it.normInit))
+    );
+    const simEnd = Math.max(
+      ...allItems.map((it) =>
+        it.acft.type === "DEP"
+          ? it.norm60
+          : eatMap.get(it.acft.id)?.effectiveEstNorm || it.normInit + 20
+      )
+    );
+
+    for (let t = simStart; t <= simEnd + 1e-6; t = +(t + 0.2).toFixed(2)) {
+      totalStepsChecked++;
+      const activeInStep = [];
+
+      allItems.forEach((it) => {
+        const tl = solvedTimelines.get(it.acft.id);
+        if (it.acft.type === "DEP") {
+          if (t >= it.normDep && t <= it.norm60) {
+            const dme = (t - it.normDep) * SPEED_NM_PER_MIN;
+            activeInStep.push({
+              it,
+              dme,
+              inVor15: dme < 15,
+              altFt: evaluateTimelineAlt(tl, t, it.wpt.msaFt),
+            });
+          }
+        } else {
+          const eat = eatMap.get(it.acft.id);
+          if (t >= it.normInit && t < eat.effectiveEstNorm - 1e-6) {
+            const enter15 = it.norm15 !== null ? it.norm15 : it.normInit;
+            activeInStep.push({
+              it,
+              dme: t <= (it.normVor ?? it.norm10) ? Math.max(0, it.calc.dist - (t - it.normInit) * 5) : 10,
+              inVor15: t >= enter15 - 1e-6,
+              altFt: evaluateTimelineAlt(tl, t, it.wpt.msaFt),
+            });
+          }
+        }
+      });
+
+      const vor15Count = activeInStep.filter((a) => a.inVor15).length;
+      if (vor15Count > maxSimultaneousInVor15) {
+        maxSimultaneousInVor15 = vor15Count;
+      }
+
+      for (let a = 0; a < activeInStep.length; a++) {
+        for (let b = a + 1; b < activeInStep.length; b++) {
+          const A = activeInStep[a];
+          const B = activeInStep[b];
+          if ((A.inVor15 && B.inVor15) || A.it.acft.wptId === B.it.acft.wptId) {
+            totalPairChecks++;
+          }
+        }
+      }
+    }
+  }
 
   return {
     refHour,
@@ -1139,11 +1822,20 @@ function solveScenario(aircraftList, activeRwy) {
     depArrConflicts,
     vorSepConstraints,
     aircraftPlans,
+    solvedTimelines,
+    liveSimStats: {
+      dtMins: 0.2,
+      stepNm: 1,
+      totalStepsChecked,
+      totalPairChecks,
+      maxSimultaneousInVor15,
+    },
   };
 }
 
 // ============================================================================
 // LIVE POSITION, ALTITUDE & SVG COORDINATE ESTIMATOR AT TIME T
+// Uses the exact live-simulated altitude timeline from solveScenario
 // ============================================================================
 function polarToSvg(dmeNm, deg) {
   const rad = (deg * Math.PI) / 180;
@@ -1157,6 +1849,7 @@ function polarToSvg(dmeNm, deg) {
 function getAircraftStateAtTime(item, solverData, queryNormMins) {
   const { acft, wpt, calc } = item;
   const plan = solverData.aircraftPlans.get(acft.id);
+  const altTimeline = plan ? plan.altTimeline : null;
 
   if (acft.type === "DEP") {
     const tDep = item.normDep;
@@ -1175,21 +1868,7 @@ function getAircraftStateAtTime(item, solverData, queryNormMins) {
 
     const elapsed = queryNormMins - tDep;
     const dme = +(elapsed * SPEED_NM_PER_MIN).toFixed(1);
-    const locks = solverData.depArrConflicts.filter(
-      (c) => c.depAcft.id === acft.id && c.isValidInboundConflict
-    );
-
-    let currentAltFt = calc.reqAltFt;
-    if (dme < 10) {
-      currentAltFt = wpt.msaFt;
-    } else if (dme < 25) {
-      currentAltFt = wpt.meaFt;
-    }
-    locks.forEach((lk) => {
-      if (queryNormMins < lk.tCrossNorm) {
-        currentAltFt = Math.min(currentAltFt, lk.depRestrictedAltFt);
-      }
-    });
+    const currentAltFt = evaluateTimelineAlt(altTimeline, queryNormMins, calc.reqAltFt);
 
     const pos = polarToSvg(Math.min(dme, 72), wpt.deg);
     const tip = polarToSvg(Math.min(dme + 4, 76), wpt.deg);
@@ -1227,28 +1906,8 @@ function getAircraftStateAtTime(item, solverData, queryNormMins) {
     };
   }
 
-  // Determine current solved altitude for Arrival
-  let currentAltFt = plan ? plan.enrouteTargetFt : wpt.meaFt;
-  const locks = solverData.depArrConflicts.filter(
-    (c) => c.arrAcft.id === acft.id && c.isValidInboundConflict
-  );
-  locks.forEach((lk) => {
-    if (queryNormMins >= lk.tCrossNorm && lk.dCross >= 25) {
-      currentAltFt = wpt.meaFt;
-    }
-  });
-
-  if (item.norm25 !== null && queryNormMins >= item.norm25) {
-    currentAltFt = plan ? plan.msaTargetFt : wpt.msaFt;
-  }
-
-  const effectiveClearTime = eatInfo.willDelay ? eatInfo.eatNorm : item.normClearBase;
-  if (queryNormMins >= item.norm10 && eatInfo.willDelay && queryNormMins < eatInfo.eatNorm) {
-    currentAltFt = Math.min(currentAltFt, 4000);
-  }
-  if (queryNormMins >= effectiveClearTime) {
-    currentAltFt = 3000;
-  }
+  // Exact live-simulated altitude at queryNormMins
+  const currentAltFt = evaluateTimelineAlt(altTimeline, queryNormMins, wpt.msaFt);
 
   // Straight-In Arrival Geometry
   if (calc.straightIn) {
@@ -1273,12 +1932,13 @@ function getAircraftStateAtTime(item, solverData, queryNormMins) {
     }
 
     if (queryNormMins <= eatInfo.effectiveEstNorm) {
+      const stackIdx = Math.max(0, Math.round((currentAltFt - 4000) / 1000));
       const pos = polarToSvg(10, wpt.deg);
       return {
         visible: true,
         phase: "hold",
-        x: pos.x,
-        y: pos.y,
+        x: pos.x + stackIdx * 8,
+        y: pos.y + stackIdx * 6,
         tipX: pos.x,
         tipY: pos.y,
         dme: 10,
@@ -1369,12 +2029,13 @@ function getAircraftStateAtTime(item, solverData, queryNormMins) {
   // 3. Holding at 10 DME FIX (if eatInfo.effectiveFixNorm > item.normFixBase)
   if (queryNormMins <= eatInfo.effectiveFixNorm) {
     const remHold = +(eatInfo.effectiveFixNorm - queryNormMins).toFixed(1);
+    const stackIdx = Math.max(0, Math.round((currentAltFt - 4000) / 1000));
     const pos = polarToSvg(10, procDeg);
     return {
       visible: true,
       phase: "hold",
-      x: pos.x + 12,
-      y: pos.y + 8,
+      x: +(pos.x + 12 + stackIdx * 8).toFixed(1),
+      y: +(pos.y + 8 + stackIdx * 6).toFixed(1),
       tipX: pos.x,
       tipY: pos.y,
       dme: 10,
@@ -1389,7 +2050,6 @@ function getAircraftStateAtTime(item, solverData, queryNormMins) {
   if (queryNormMins <= eatInfo.effectiveEstNorm) {
     const turnProgress = (queryNormMins - eatInfo.effectiveFixNorm) / 5; // 0 to 1
     const remTurn = +(eatInfo.effectiveEstNorm - queryNormMins).toFixed(1);
-    // Smooth teardrop arc around 10–13 DME returning to 10 DME on final
     const arcDme = 10 + 3 * Math.sin(turnProgress * Math.PI);
     const arcDeg = procDeg + 12 * Math.sin(turnProgress * Math.PI);
     const pos = polarToSvg(arcDme, arcDeg);
@@ -1935,6 +2595,16 @@ function renderSolverPanels(solver) {
   const plansGridEl = document.getElementById("solverAircraftPlans");
   const depArrListEl = document.getElementById("depArrConflictList");
   const ilsDelayListEl = document.getElementById("ilsDelayList");
+  const liveSimBadgeEl = document.getElementById("liveSimBadge");
+
+  if (liveSimBadgeEl && solver.liveSimStats) {
+    const { totalStepsChecked, totalPairChecks, maxSimultaneousInVor15 } = solver.liveSimStats;
+    liveSimBadgeEl.innerHTML = `
+      <span class="freq-pill twr-pill">⚡ LIVE SIM: <strong>${totalStepsChecked} steps (0.2m / 1 NM)</strong></span>
+      <span class="freq-pill">VOR/Radial Checks: <strong>${totalPairChecks}</strong></span>
+      <span class="freq-pill">Peak &lt;15 NM Stack: <strong>${maxSimultaneousInVor15} acft</strong></span>
+    `;
+  }
 
   // 1. Per-Aircraft Solved Clearance Plans
   if (solver.aircraftPlans.size === 0) {
@@ -1957,7 +2627,11 @@ function renderSolverPanels(solver) {
 
       const eatBadge =
         eatInfo && eatInfo.willDelay
-          ? `<span class="badge badge-eat">EAT ${eatInfo.eatDisplay}</span>`
+          ? `<span class="badge badge-eat">EAT ${eatInfo.eatDisplay}${
+              eatInfo.initialHoldAltFt > 4000
+                ? ` • STACK ${formatAltShort(eatInfo.initialHoldAltFt)}`
+                : ""
+            }</span>`
           : "";
 
       card.innerHTML = `
@@ -1998,12 +2672,12 @@ function renderSolverPanels(solver) {
     });
   }
 
-  // 2. Departure <-> Arrival Head-On Conflicts
+  // 2. Departure <-> Arrival Same-Radial & <15 NM Cross-Radial Conflicts
   if (solver.depArrConflicts.length === 0) {
     depArrListEl.innerHTML = `
       <div class="conflict-box">
         <div class="conflict-detail">
-          No Arrival &amp; Departure pair on the same waypoint.
+          No same-waypoint or &lt;15 NM VOR Departure ↔ Arrival conflicts detected.
         </div>
       </div>
     `;
@@ -2042,12 +2716,12 @@ function renderSolverPanels(solver) {
     });
   }
 
-  // 3. VOR <15 NM Separation & EAT Delays
+  // 3. VOR <15 NM Separation, Multi-Aircraft Stack & EAT Delays
   ilsDelayListEl.innerHTML = "";
   if (solver.vorSepConstraints.length === 0 && solver.sequencedArrivals.length <= 1) {
     ilsDelayListEl.innerHTML = `
       <div class="conflict-box">
-        <div class="conflict-detail">Add 2 or more arriving aircraft to see VOR &lt;15 NM vertical separation constraints and EAT calculations.</div>
+        <div class="conflict-detail">Add 2 or more arriving aircraft to see live VOR &lt;15 NM vertical separation constraints, holding stacks, and EAT calculations.</div>
       </div>
     `;
   } else {
@@ -2068,18 +2742,29 @@ function renderSolverPanels(solver) {
       ilsDelayListEl.appendChild(box);
     });
 
-    // Show EAT Delay Summary for delayed arrivals
+    // Show EAT Delay & Multi-Aircraft Holding Stack Summary for delayed arrivals
     solver.sequencedArrivals.forEach((item) => {
       const eatInfo = solver.eatMap.get(item.acft.id);
       if (eatInfo.willDelay) {
         const box = document.createElement("div");
         box.className = "conflict-box alert-danger";
+        const stepDownHtml =
+          eatInfo.holdStepDowns && eatInfo.holdStepDowns.length > 0
+            ? `<br/>→ <strong>Hold Stack Entry: ${formatAlt(
+                eatInfo.initialHoldAltFt
+              )}</strong> • Step-downs: ${eatInfo.holdStepDowns
+                .map((sd) => `<code>${sd.timeStr}</code> → <strong>${formatAlt(sd.altFt)}</strong>`)
+                .join(", ")}`
+            : `<br/>→ <strong>Hold / Approach Altitude before EAT: ${formatAlt(
+                eatInfo.initialHoldAltFt
+              )}</strong>`;
+
         box.innerHTML = `
           <div class="conflict-top">
             <span class="conflict-pair">⏳ ${item.acft.callsign} (${item.wpt.name}) — EAT: ${eatInfo.eatDisplay}</span>
             <span class="badge badge-delayed">${
               eatInfo.autoHoldMins > 0 ? `HOLDS ${eatInfo.autoHoldMins}m` : "NO HOLD NEEDED"
-            }</span>
+            } • ${formatAltShort(eatInfo.initialHoldAltFt)}</span>
           </div>
           <div class="conflict-detail" style="color:var(--text-main);">
             Would reach ILS clearance point at <code>${formatTime(
@@ -2087,7 +2772,7 @@ function renderSolverPanels(solver) {
               item.calc.hasHour
             )}</code>, but <strong>#${eatInfo.seqNum - 1} ${
           eatInfo.blockedBy.acft.callsign
-        }</strong> is not established until <code>${eatInfo.eatDisplay}</code>.<br/>
+        }</strong> is not established until <code>${eatInfo.eatDisplay}</code>.${stepDownHtml}<br/>
             → <strong>EAT = ${eatInfo.eatDisplay}</strong> (${
           eatInfo.clearancePhaseNote
         }) → Established at <code>${eatInfo.effectiveEstDisplay}</code>.
