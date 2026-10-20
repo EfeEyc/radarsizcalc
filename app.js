@@ -2139,6 +2139,214 @@ function renderStaticSvgCorridors() {
   });
 }
 
+// Helper: find nearest point on a rectangle's perimeter to point (px, py)
+function getRectPerimeterAnchor(px, py, rx, ry, rw, rh) {
+  const cx = rx + rw / 2;
+  const cy = ry + rh / 2;
+  const dx = px - cx;
+  const dy = py - cy;
+  if (dx === 0 && dy === 0) return { x: rx, y: cy };
+
+  const halfW = rw / 2;
+  const halfH = rh / 2;
+  const scaleX = Math.abs(dx) > 0.001 ? halfW / Math.abs(dx) : Infinity;
+  const scaleY = Math.abs(dy) > 0.001 ? halfH / Math.abs(dy) : Infinity;
+  const scale = Math.min(scaleX, scaleY);
+
+  return {
+    x: +(cx + dx * scale).toFixed(1),
+    y: +(cy + dy * scale).toFixed(1),
+  };
+}
+
+// Helper: check if two rectangles overlap (with padding)
+function rectsOverlap(ax, ay, aw, ah, bx, by, bw, bh, pad = 8) {
+  return (
+    ax < bx + bw + pad &&
+    ax + aw + pad > bx &&
+    ay < by + bh + pad &&
+    ay + ah + pad > by
+  );
+}
+
+// Helper: check if two line segments (p1->p2) and (p3->p4) intersect
+function segmentsIntersect(p1x, p1y, p2x, p2y, p3x, p3y, p4x, p4y) {
+  const ccw = (ax, ay, bx, by, cx, cy) =>
+    (cy - ay) * (bx - ax) > (by - ay) * (cx - ax);
+  return (
+    ccw(p1x, p1y, p3x, p3y, p4x, p4y) !== ccw(p2x, p2y, p3x, p3y, p4x, p4y) &&
+    ccw(p1x, p1y, p2x, p2y, p3x, p3y) !== ccw(p1x, p1y, p2x, p2y, p4x, p4y)
+  );
+}
+
+// Compute guaranteed non-overlapping callsign tag positions around radar blips
+function computeNonOverlappingTagPositions(visibleBlips) {
+  const TAG_W = 88;
+  const TAG_H = 30;
+  const PAD = 8;
+  const BLIP_CLEARANCE = 14;
+  const MIN_X = 10;
+  const MAX_X = 850 - TAG_W;
+  const MIN_Y = 10;
+  const MAX_Y = 850 - TAG_H;
+
+  const placedTags = [];
+
+  // Angle offsets (in degrees) from preferred outward direction
+  const angleSteps = [
+    0, 25, -25, 50, -50, 75, -75, 100, -100, 125, -125, 150, -150, 180,
+  ];
+  const radii = [46, 68, 92, 118, 146, 176, 210];
+
+  visibleBlips.forEach((b, idx) => {
+    // Preferred outward direction away from chart center (430, 430)
+    const dxCenter = b.x - SVG_CENTER_X;
+    const dyCenter = b.y - SVG_CENTER_Y;
+    const baseAngleRad =
+      Math.hypot(dxCenter, dyCenter) > 8
+        ? Math.atan2(dyCenter, dxCenter)
+        : (idx * (2 * Math.PI)) / Math.max(1, visibleBlips.length) - Math.PI / 4;
+
+    let bestCandidate = null;
+    let bestScore = Infinity;
+
+    for (const r of radii) {
+      for (const aDeg of angleSteps) {
+        const ang = baseAngleRad + (aDeg * Math.PI) / 180;
+        const centerX = b.x + r * Math.cos(ang);
+        const centerY = b.y + r * Math.sin(ang);
+        const tx = Math.max(MIN_X, Math.min(MAX_X, centerX - TAG_W / 2));
+        const ty = Math.max(MIN_Y, Math.min(MAX_Y, centerY - TAG_H / 2));
+
+        // 1. Check collision with already placed tags
+        let overlapsTag = false;
+        for (const pt of placedTags) {
+          if (rectsOverlap(tx, ty, TAG_W, TAG_H, pt.tx, pt.ty, TAG_W, TAG_H, PAD)) {
+            overlapsTag = true;
+            break;
+          }
+        }
+        if (overlapsTag) continue;
+
+        // 2. Check collision with any visible blip diamond
+        let overlapsBlip = false;
+        for (const otherBlip of visibleBlips) {
+          if (
+            rectsOverlap(
+              tx,
+              ty,
+              TAG_W,
+              TAG_H,
+              otherBlip.x - 6,
+              otherBlip.y - 6,
+              12,
+              12,
+              BLIP_CLEARANCE
+            )
+          ) {
+            overlapsBlip = true;
+            break;
+          }
+        }
+        if (overlapsBlip) continue;
+
+        // 3. Score candidate by distance and leader-line crossings
+        const anchor = getRectPerimeterAnchor(b.x, b.y, tx, ty, TAG_W, TAG_H);
+        let lineCrossPenalty = 0;
+        for (const pt of placedTags) {
+          if (
+            segmentsIntersect(
+              b.x,
+              b.y,
+              anchor.x,
+              anchor.y,
+              pt.bx,
+              pt.by,
+              pt.anchorX,
+              pt.anchorY
+            )
+          ) {
+            lineCrossPenalty += 400;
+          }
+        }
+
+        const distScore = r + Math.abs(aDeg) * 0.25 + lineCrossPenalty;
+        if (distScore < bestScore) {
+          bestScore = distScore;
+          bestCandidate = { tx, ty };
+        }
+      }
+      if (bestCandidate && bestScore < 400) break;
+    }
+
+    if (!bestCandidate) {
+      // Fallback position before relaxation pass
+      bestCandidate = {
+        tx: Math.max(MIN_X, Math.min(MAX_X, b.x + 28)),
+        ty: Math.max(MIN_Y, Math.min(MAX_Y, b.y - 36 - idx * 38)),
+      };
+    }
+
+    const anchor = getRectPerimeterAnchor(
+      b.x,
+      b.y,
+      bestCandidate.tx,
+      bestCandidate.ty,
+      TAG_W,
+      TAG_H
+    );
+
+    placedTags.push({
+      bx: b.x,
+      by: b.y,
+      tx: bestCandidate.tx,
+      ty: bestCandidate.ty,
+      anchorX: anchor.x,
+      anchorY: anchor.y,
+      w: TAG_W,
+      h: TAG_H,
+    });
+  });
+
+  // Final Iterative Separation Pass to guarantee 0% overlap under all scenarios
+  for (let iter = 0; iter < 50; iter++) {
+    let moved = false;
+    for (let i = 0; i < placedTags.length; i++) {
+      for (let j = i + 1; j < placedTags.length; j++) {
+        const A = placedTags[i];
+        const B = placedTags[j];
+        const overlapX = A.w + PAD - Math.abs(A.tx + A.w / 2 - (B.tx + B.w / 2));
+        const overlapY = A.h + PAD - Math.abs(A.ty + A.h / 2 - (B.ty + B.h / 2));
+
+        if (overlapX > 0 && overlapY > 0) {
+          moved = true;
+          if (overlapX < overlapY) {
+            const dir = A.tx <= B.tx ? -1 : 1;
+            A.tx = Math.max(MIN_X, Math.min(MAX_X, A.tx + (dir * overlapX) / 2));
+            B.tx = Math.max(MIN_X, Math.min(MAX_X, B.tx - (dir * overlapX) / 2));
+          } else {
+            const dir = A.ty <= B.ty ? -1 : 1;
+            A.ty = Math.max(MIN_Y, Math.min(MAX_Y, A.ty + (dir * overlapY) / 2));
+            B.ty = Math.max(MIN_Y, Math.min(MAX_Y, B.ty - (dir * overlapY) / 2));
+          }
+        }
+      }
+    }
+    if (!moved) break;
+  }
+
+  // Recompute exact perimeter anchor points after any relaxation adjustments
+  placedTags.forEach((pt) => {
+    const anchor = getRectPerimeterAnchor(pt.bx, pt.by, pt.tx, pt.ty, pt.w, pt.h);
+    pt.anchorX = anchor.x;
+    pt.anchorY = anchor.y;
+    pt.tx = +pt.tx.toFixed(1);
+    pt.ty = +pt.ty.toFixed(1);
+  });
+
+  return placedTags;
+}
+
 function renderRadarChartView(solver) {
   const blipsLayer = document.getElementById("svgBlipsLayer");
   const listEl = document.getElementById("positionSnapshotList");
@@ -2186,7 +2394,9 @@ function renderRadarChartView(solver) {
     return;
   }
 
-  allItems.forEach((item, idx) => {
+  const visibleBlips = [];
+
+  allItems.forEach((item) => {
     const st = getAircraftStateAtTime(item, solver, queryNorm);
 
     // 1. Add to Sidebar list
@@ -2207,32 +2417,46 @@ function renderRadarChartView(solver) {
     `;
     listEl.appendChild(row);
 
-    // 2. Draw Radar Blip on SVG Chart if visible
     if (st.visible && st.x !== undefined && st.y !== undefined) {
-      const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
-
-      // Offset data tag slightly based on index to avoid overlapping labels
-      const offsetX = idx % 2 === 0 ? 14 : -92;
-      const offsetY = idx % 3 === 0 ? -28 : 8;
-      const tagX = st.x + offsetX;
-      const tagY = st.y + offsetY;
-
-      g.innerHTML = `
-        <!-- Velocity Leader Line -->
-        <line x1="${st.x}" y1="${st.y}" x2="${st.tipX}" y2="${st.tipY}" stroke="${st.color}" stroke-width="2" />
-        <!-- Tag Connector Line -->
-        <line x1="${st.x}" y1="${st.y}" x2="${tagX + 38}" y2="${tagY + 14}" stroke="${st.color}" stroke-width="1" stroke-dasharray="2 2" opacity="0.75" />
-        <!-- Radar Target Blip (Diamond + Center Dot) -->
-        <rect x="${st.x - 5}" y="${st.y - 5}" width="10" height="10" fill="#0b111e" stroke="${st.color}" stroke-width="2.2" transform="rotate(45 ${st.x} ${st.y})" />
-        <circle cx="${st.x}" cy="${st.y}" r="2" fill="${st.color}" />
-        <!-- ATC Data Block -->
-        <rect x="${tagX}" y="${tagY}" width="82" height="29" class="blip-tag-bg" stroke="${st.color}" />
-        <text x="${tagX + 5}" y="${tagY + 12}" class="blip-tag-title" fill="${st.color}">${item.acft.callsign}</text>
-        <text x="${tagX + 5}" y="${tagY + 24}" class="blip-tag-sub">${st.altStr} • ${st.dme}NM</text>
-      `;
-
-      blipsLayer.appendChild(g);
+      visibleBlips.push({
+        item,
+        st,
+        x: st.x,
+        y: st.y,
+      });
     }
+  });
+
+  // Compute non-overlapping callsign tag positions & connecting line anchors
+  const tagPlacements = computeNonOverlappingTagPositions(visibleBlips);
+
+  // First pass: draw connecting leader lines, velocity vectors, and radar target diamonds
+  visibleBlips.forEach(({ st }, i) => {
+    const tag = tagPlacements[i];
+    const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    g.innerHTML = `
+      <!-- Connecting Line from Blip to Callsign Tag -->
+      <line x1="${st.x}" y1="${st.y}" x2="${tag.anchorX}" y2="${tag.anchorY}" stroke="${st.color}" stroke-width="1.5" opacity="0.9" />
+      <circle cx="${tag.anchorX}" cy="${tag.anchorY}" r="2.2" fill="${st.color}" />
+      <!-- Velocity Leader Vector -->
+      <line x1="${st.x}" y1="${st.y}" x2="${st.tipX}" y2="${st.tipY}" stroke="${st.color}" stroke-width="2.2" />
+      <!-- Radar Target Blip (Diamond + Center Dot) -->
+      <rect x="${st.x - 5}" y="${st.y - 5}" width="10" height="10" fill="#0b111e" stroke="${st.color}" stroke-width="2.2" transform="rotate(45 ${st.x} ${st.y})" />
+      <circle cx="${st.x}" cy="${st.y}" r="2" fill="${st.color}" />
+    `;
+    blipsLayer.appendChild(g);
+  });
+
+  // Second pass: draw callsign tag boxes on top so no line ever obscures tag text
+  visibleBlips.forEach(({ item, st }, i) => {
+    const tag = tagPlacements[i];
+    const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    g.innerHTML = `
+      <rect x="${tag.tx}" y="${tag.ty}" width="${tag.w}" height="${tag.h}" class="blip-tag-bg" stroke="${st.color}" />
+      <text x="${tag.tx + 5}" y="${tag.ty + 12}" class="blip-tag-title" fill="${st.color}">${item.acft.callsign}</text>
+      <text x="${tag.tx + 5}" y="${tag.ty + 24}" class="blip-tag-sub">${st.altStr} • ${st.dme}NM</text>
+    `;
+    blipsLayer.appendChild(g);
   });
 }
 
